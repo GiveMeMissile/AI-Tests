@@ -1,14 +1,12 @@
-import os
 import time
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from torchvision.transforms import ToTensor
 
 NUMBER_OF_OUTPUTS = 1
 NUMBER_OF_CHOICES = 2
-BATCH_SIZE = 20
+BATCH_SIZE = 40
 IMAGE_DIMENSIONS = 64
 NEURONS = 2674
 DEVICE = "cpu"  # Use "cuda" if you have CUDA and want to use the GPU
@@ -19,7 +17,8 @@ transform_bad = transforms.Compose([
     transforms.Normalize(mean=[0.3598, 0.4181, 0.4291], std=[0.2876, 0.2580, 0.2811]),
     transforms.RandomHorizontalFlip(),
     transforms.RandomVerticalFlip(),
-    transforms.RandomRotation((-180, 180))
+    transforms.RandomRotation((-180, 180)),
+    transforms.Grayscale()
 ])
 
 transform_test = transforms.Compose([
@@ -28,7 +27,8 @@ transform_test = transforms.Compose([
     transforms.Normalize(mean=[0.4282, 0.4245, 0.3755], std=[0.3002, 0.2806, 0.2890]),
     transforms.RandomHorizontalFlip(),
     transforms.RandomVerticalFlip(),
-    transforms.RandomRotation((-180, 180))
+    transforms.RandomRotation((-180, 180)),
+    transforms.Grayscale()
 ])
 
 bad_dataset = datasets.ImageFolder(root="Bad_data", transform=transform_bad)
@@ -43,7 +43,7 @@ class AI1(nn.Module):
         super().__init__()
         self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(IMAGE_DIMENSIONS * IMAGE_DIMENSIONS, NEURONS),
+            nn.Linear(IMAGE_DIMENSIONS*IMAGE_DIMENSIONS, NEURONS),
             nn.ReLU(),
             nn.Linear(NEURONS, NEURONS),
             nn.ReLU(),
@@ -103,7 +103,7 @@ def test(dataloader, model, loss_fn):
 
     test_loss /= num_batches
     correct /= size
-    print(f"Test Error: \n Accuracy: {100 * correct:>0.1f}%, Average Loss: {test_loss:>8f} \n")
+    print(f"Test Error: \n Accuracy: {100 * correct:>0.1f}%, Average Loss: {test_loss:>8f}")
 
 
 def getEpoch():
