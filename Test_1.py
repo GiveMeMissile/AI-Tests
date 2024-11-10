@@ -32,7 +32,7 @@ transform_test = transforms.Compose([
 ])
 
 bad_dataset = datasets.ImageFolder(root="Bad_data", transform=transform_bad)
-test_dataset = datasets.ImageFolder(root="Test_Dataset", transform=transform_test)
+test_dataset = datasets.ImageFolder(root="Placeholder", transform=transform_test)
 
 bad_dataloader = DataLoader(bad_dataset, batch_size=BATCH_SIZE, shuffle=True)
 test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=True)
