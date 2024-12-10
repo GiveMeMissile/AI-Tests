@@ -8,7 +8,7 @@ import time
 MAGNITUDE_BINS = 31
 TRAIN_ROOT = "Bad_data"
 # Test dataset will change when I get a better test dataset.
-TEST_ROOT = "Test_Dataset"
+TEST_ROOT = "Placeholder"
 
 train_transform = transforms.Compose([
     transforms.Resize(size=(64, 64)),
