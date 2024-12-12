@@ -1,3 +1,4 @@
+# I am mentally stable (:
 import torch
 from torch import nn
 from torchvision import datasets, transforms
@@ -12,8 +13,11 @@ MAGNITUDE_BINS = 31
 TRAIN_ROOT = "Bad_data"
 NUM_WORKERS = os.cpu_count()
 BATCH_SIZE = 16
-# Test dataset will change when I get a better test dataset.
-TEST_ROOT = "Placeholder"
+COLOR_CHANNELS = 3
+# User input can be turned off if you want to change this code for testing rather than using user input for testing.
+USER_INPUT = True
+# Test dataset will change when I get a better test dataset. If I ever get one ):
+TEST_ROOT = "Test_Dataset"
 
 
 train_transform = transforms.Compose([
@@ -33,7 +37,45 @@ test_data = datasets.ImageFolder(root=TEST_ROOT, transform=test_transform)
 train_dataloader = DataLoader(dataset=train_data, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=True)
 test_dataloader = DataLoader(dataset=test_data, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=False)
 
-class CNNModel(nn.Module):
+
+def calculate_linear_input(num_hidden_layers):
+    # Used to prevent shape errors. Only works with 1-6 layers.
+    # also MATH!!!!!! I LOVE MATH!!!!! YIPPEE!!!
+    return int((64*((1/2)**num_hidden_layers))**2)
+
+
+def collect_model_data():
+    # This is used to get the number of hidden layers and hidden features.
+    # Makes it easy to experiment without having to change the code. (:
+    if USER_INPUT:
+        while True:
+            try:
+                num_hidden_layers = int(input("How many hidden layers do you want (a number between 1-6)?: "))
+                if num_hidden_layers < 0 or num_hidden_layers >= 7:
+                    print("Your number is out of the input range. Please try again.")
+                else:
+                    print(f"Number of hidden layers: {num_hidden_layers}")
+                    break
+            except ValueError:
+                print("You didn't input an Integer. Please try again.")
+        while True:
+            try:
+                hidden_features = int(input("How many neurons/hidden features do you want?: "))
+                if hidden_features <= 0:
+                    print("You inputted a number below 1. Please input a number above 0.")
+                else:
+                    print(f"Hidden features: {hidden_features}")
+                    break
+            except ValueError:
+                print("You didn't input a Integer. Please try again.")
+    else:
+        # If you are not using user input change these values for experimentation.
+        hidden_features = 16
+        num_hidden_layers = 1
+    return num_hidden_layers, hidden_features
+
+
+class AdaptiveCNNModel(nn.Module):
     def __init__(self, input_features, hidden_features, num_hidden_layers=1, output_features=1):
         super().__init__()
         self.input_layer = nn.Conv2d(in_channels=input_features, out_channels=hidden_features,
@@ -51,7 +93,7 @@ class CNNModel(nn.Module):
         )
         self.output_layer = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(in_features=hidden_features*16*16, out_features=output_features)
+            nn.Linear(in_features=hidden_features*calculate_linear_input(num_hidden_layers), out_features=output_features)
         )
         self.num_hidden_layers = num_hidden_layers
 
@@ -67,19 +109,8 @@ class CNNModel(nn.Module):
         return x
 
 
-rand = torch.randn(size=(BATCH_SIZE, 3, 64, 64), dtype=torch.float32)
-model = CNNModel(input_features=3, hidden_features=16, num_hidden_layers=2)
-'''
-model.eval()
-with torch.inference_mode():
-    dummy_prediction = model.forward(rand, show_hidden=True)
-    print(f"Worthless prediction: {dummy_prediction}")
-'''
-loss_fn = nn.BCEWithLogitsLoss()
-optimizer = torch.optim.Adam(params=model.parameters())
-
-
 def train(model, loss_fn, optimizer, dataloader):
+    # Loopin through the crappy training dataset
     model.train()
     train_loss = 0
     train_acc = 0
@@ -98,6 +129,7 @@ def train(model, loss_fn, optimizer, dataloader):
 
 
 def test(model, loss_fn, dataloader):
+    # Loopin through the subpar test dataset
     model.eval()
     test_loss = 0
     test_acc = 0
@@ -114,6 +146,10 @@ def test(model, loss_fn, dataloader):
 
 
 def get_epoch():
+    if not USER_INPUT:
+        # This value can be changed if you are not using user input.
+        epochs = 20
+        return epochs
     while True:
         try:
             epochs = int(input("How many epochs do you desire?: "))
@@ -127,29 +163,55 @@ def get_epoch():
 
 
 def create_and_display_dataframe(dictionary):
+    # This function is used to create a dataframe of the model results using PANDASSSSSSSSSSSSSSSSS!!!!
     dataframe = pd.DataFrame(dictionary)
     print(dataframe)
     return dataframe
 
 
 def save_model(model):
+    if not USER_INPUT:
+        # You can change this code below in order to save the model if you want.
+        print("No save -_-")
+        return 0
     save = input("Do you want to save this model?: ")
     if not (save == "yes" or save == "Yes"):
         print("This model shall not be saved.")
         return 0
-    model_path = Path(input("What file do you want to save your model in?: "))
+    model_path = Path(input("What file do you want to save your model in? \n"
+                            "If you input a file that dose not exist. One will be created for you: "))
     model_path.mkdir(parents=True, exist_ok=True)
     model_name = input("What do you want your model dict's name to be?: ")+".pth"
     model_save_path = model_path/model_name
     print("Now downloading the model.....")
+    # This will save the model dict. If you want to save the entire model then change this code to do so
     torch.save(obj=model.state_dict(), f=model_save_path)
-    print("Model successfully saved! YIPPEE")
+    print("Model successfully saved! YIPPEE!!!")
 
 
+# For error prevention. PyCharm didn't want to work without this if statement -_-
 if __name__ == "__main__":
+    num_hidden_layers, hidden_features = collect_model_data()
+
+    model = AdaptiveCNNModel(input_features=COLOR_CHANNELS, hidden_features=hidden_features,
+                             num_hidden_layers=num_hidden_layers)
+
+    # The commented out code below is used for testing shape errors within the Neural Network
+    # model.eval()
+    # rand = torch.randn(size=(BATCH_SIZE, 3, 64, 64), dtype=torch.float32)
+    # with torch.inference_mode():
+    #     dummy_prediction = model.forward(rand, show_hidden=True)
+    #     print(f"Worthless prediction: {dummy_prediction}")
+
+    # BCE with logits for binary classification
+    loss_fn = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(params=model.parameters())
+
     epochs = get_epoch()
+    # This dictionary is used to store the results of the training/testing
+    # A dict called results containing results. Who woulda thunk it!
     results = {"Epoch": [], "Train_loss": [], "Train_accuracy": [], "Test_loss": [], "Test_accuracy": [], "Time": []}
-    print("We shall now begin the training process.")
+    print("We shall now begin the training process. Yay!")
 
     for epoch in range(epochs):
         start = time.time()
@@ -163,7 +225,7 @@ if __name__ == "__main__":
         results["Test_accuracy"].append(test_acc)
         results["Time"].append(end-start)
         print(f"Epoch: {epoch+1} | Train loss: {train_loss:.4f} | Train accuracy: {train_acc:.3f}%\n"
-            f"Test loss: {test_loss:.4f} | Test accuracy: {test_acc:.3f}%, Time: {end-start:.3f}s.\n")
+                f"Test loss: {test_loss:.4f} | Test accuracy: {test_acc:.3f}%, Time: {end-start:.3f}s.\n")
 
     results_df = create_and_display_dataframe(dictionary=results)
     save_model(model)
