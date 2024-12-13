@@ -17,7 +17,7 @@ COLOR_CHANNELS = 3
 # User input can be turned off if you want to change this code for testing rather than using user input for testing.
 USER_INPUT = True
 # Test dataset will change when I get a better test dataset. If I ever get one ):
-TEST_ROOT = "Test_Dataset"
+TEST_ROOT = "Placeholder"
 
 
 train_transform = transforms.Compose([
@@ -62,9 +62,20 @@ def collect_model_data():
             try:
                 hidden_features = int(input("How many neurons/hidden features do you want?: "))
                 if hidden_features <= 0:
-                    print("You inputted a number below 1. Please input a number above 0.")
+                    print("You inputted a number below or at 0. Please input a number above 0.")
                 else:
                     print(f"Hidden features: {hidden_features}")
+                    break
+            except ValueError:
+                print("You didn't input a Integer. Please try again.")
+        while True:
+            try:
+                learning_rate = float(input("What do you want the learning rate to be "
+                                            "(recommended to be inbetween 0.1-0.0001)?: "))
+                if learning_rate <= 0:
+                    print("You inputted a number below 0. Please input a number above 0.")
+                else:
+                    print(f"Learning rate: {learning_rate}")
                     break
             except ValueError:
                 print("You didn't input a Integer. Please try again.")
@@ -72,7 +83,8 @@ def collect_model_data():
         # If you are not using user input change these values for experimentation.
         hidden_features = 16
         num_hidden_layers = 1
-    return num_hidden_layers, hidden_features
+        learning_rate = 0.001
+    return num_hidden_layers, hidden_features, learning_rate
 
 
 class AdaptiveCNNModel(nn.Module):
@@ -191,7 +203,7 @@ def save_model(model):
 
 # For error prevention. PyCharm didn't want to work without this if statement -_-
 if __name__ == "__main__":
-    num_hidden_layers, hidden_features = collect_model_data()
+    num_hidden_layers, hidden_features, learning_rate = collect_model_data()
 
     model = AdaptiveCNNModel(input_features=COLOR_CHANNELS, hidden_features=hidden_features,
                              num_hidden_layers=num_hidden_layers)
@@ -205,13 +217,15 @@ if __name__ == "__main__":
 
     # BCE with logits for binary classification
     loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(params=model.parameters())
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
 
     epochs = get_epoch()
     # This dictionary is used to store the results of the training/testing
     # A dict called results containing results. Who woulda thunk it!
     results = {"Epoch": [], "Train_loss": [], "Train_accuracy": [], "Test_loss": [], "Test_accuracy": [], "Time": []}
     print("We shall now begin the training process. Yay!")
+    print(list(model.parameters()))
+    print(len(list(model.parameters())))
 
     for epoch in range(epochs):
         start = time.time()
