@@ -1,15 +1,16 @@
 import torch
 from torch import nn
 import random
+import time
 
 
 WINDOW_SIZE_X, WINDOW_SIZE_Y = 800, 500
 NUM_TRAIN_TENSORS = 500
 NUM_TEST_TENSORS = 100
 LENIENCY = 20
-INPUT_FEATURES = 4
+INPUT_FEATURES = 2
 OUTPUT_FEATURES = 4
-USER_INPUT = TrueTraining_Game_AI.pyTraining_Game_AI.py
+USER_INPUT = False
 
 
 def create_data():
@@ -19,7 +20,7 @@ def create_data():
     for _ in range(NUM_TRAIN_TENSORS):
         ai_x, ai_y = random.randint(0, WINDOW_SIZE_X), random.randint(0, WINDOW_SIZE_Y)
         goal_x, goal_y = random.randint(0, WINDOW_SIZE_X), random.randint(0, WINDOW_SIZE_Y)
-        X = torch.tensor([[ai_x, ai_y], [goal_x, goal_y]])
+        X = torch.tensor([[ai_x, ai_y], [goal_x, goal_y]], dtype=torch.float32)
         left = 0
         right = 0
         up = 0
@@ -36,7 +37,7 @@ def create_data():
             down = 1
         else:
             pass
-        y = torch.tensor([up, down, left, right])
+        y = torch.tensor([up, down, left, right], dtype=torch.float32)
         train_data["X"].append(X)
         train_data["y"].append(y)
     print("Training values created.")
@@ -45,7 +46,7 @@ def create_data():
     for _ in range(NUM_TEST_TENSORS):
         ai_x, ai_y = random.randint(0, WINDOW_SIZE_X), random.randint(0, WINDOW_SIZE_Y)
         goal_x, goal_y = random.randint(0, WINDOW_SIZE_X), random.randint(0, WINDOW_SIZE_Y)
-        X = torch.tensor([[ai_x, ai_y], [goal_x, goal_y]])
+        X = torch.tensor([[ai_x, ai_y], [goal_x, goal_y]], dtype=torch.float32)
         left = 0
         right = 0
         up = 0
@@ -62,7 +63,7 @@ def create_data():
             up = 1
         else:
             pass
-        y = torch.tensor([up, down, left, right])
+        y = torch.tensor([up, down, left, right], dtype=torch.float32)
         test_data["X"].append(X)
         test_data["y"].append(y)
     print("Testing values created.")
@@ -130,12 +131,58 @@ def get_user_input():
     return hidden_layers, hidden_features, learning_rate, epochs
 
 
+def calculate_acc(y_logits, y):
+    # This function calculates the accuracy of the AI model
+    y_pred = y_logits.sigmoid()
+    # This line of code below converts the tensors into booleans, compares the two,
+    # and then turns the tensor of booleans into a list that can be iterated through
+    acc_list = (y_pred.bool() == y.bool()).tolist()
+    acc = 0
+    # This for loop below iterates through the list in order to calculate the accuracy
+    for equal in acc_list:
+        if equal:
+            acc += 25
+    return acc
+
+
 def train(loss_fn, optimizer, model, train_dataset):
-    pass
+    start = time.time()
+    train_loss = 0
+    train_accuracy = 0
+    for X in train_dataset["X"]:
+        for y in train_dataset["y"]:
+            y_logits = model.forward(X)
+            loss = loss_fn(y, y_logits)
+            train_loss += loss
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            acc = calculate_acc(y_logits, y)
+            train_accuracy += acc
+    train_loss /= NUM_TRAIN_TENSORS
+    train_accuracy /= NUM_TRAIN_TENSORS
+    end = time.time()
+    total_train_time = end-start
+    return train_loss, train_accuracy, total_train_time
 
 
 def test(loss_fn, model, test_dataset):
-    pass
+    test_loss = 0
+    test_accuracy = 0
+    start = time.time()
+    with torch.inference_mode():
+        for X in test_dataset["X"]:
+            for y in test_dataset["y"]:
+                y_logits = model.forward(X)
+                loss = loss_fn(y_logits, y)
+                test_loss += loss
+                acc = calculate_acc(y_logits, y)
+                test_accuracy += acc
+        test_loss /= NUM_TEST_TENSORS
+        test_accuracy /= NUM_TEST_TENSORS
+        end = time.time()
+        total_test_time = end-start
+        return test_loss, test_accuracy, total_test_time
 
 
 # I am using a main function for once.
@@ -148,8 +195,11 @@ def main():
     optimizer = torch.optim.SGD(params=model.parameters(), lr=learning_rate)
 
     for epoch in range(epochs):
-        train(loss_fn, optimizer, model, train_dataset)
-        test(loss_fn, model, test_dataset)
+        train_loss, train_accuracy, total_train_time = train(loss_fn, optimizer, model, train_dataset)
+        test_loss, test_accuracy, total_test_time = test(loss_fn, model, test_dataset)
+        print(f"\nEpoch: {epoch}\n"
+              f"train loss: {test_loss:.4f} | train accuracy: {train_accuracy:.3f}% | train time: {total_train_time:.2f}."
+              f"\ntest loss: {test_loss:.4f} | test accuracy: {test_accuracy:.3f}% | test time: {total_test_time:.2f}.")
 
 
 if __name__ == "__main__":
