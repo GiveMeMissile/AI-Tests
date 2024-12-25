@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import random
 import time
+from pathlib import Path
 
 
 WINDOW_SIZE_X, WINDOW_SIZE_Y = 800, 500
@@ -9,8 +10,8 @@ NUM_TRAIN_TENSORS = 500
 NUM_TEST_TENSORS = 100
 LENIENCY = 20
 INPUT_FEATURES = 2
-OUTPUT_FEATURES = 4
-USER_INPUT = False
+OUTPUT_FEATURES = 2
+USER_INPUT = True
 
 
 def create_data():
@@ -136,7 +137,7 @@ def calculate_acc(y_logits, y):
     y_pred = y_logits.sigmoid()
     # This line of code below converts the tensors into booleans, compares the two,
     # and then turns the tensor of booleans into a list that can be iterated through
-    acc_list = (y_pred.bool() == y.bool()).tolist()
+    acc_list = (y_pred.round() == y).tolist()
     acc = 0
     # This for loop below iterates through the list in order to calculate the accuracy
     for equal in acc_list:
@@ -149,18 +150,19 @@ def train(loss_fn, optimizer, model, train_dataset):
     start = time.time()
     train_loss = 0
     train_accuracy = 0
-    for X in train_dataset["X"]:
-        for y in train_dataset["y"]:
-            y_logits = model.forward(X)
-            loss = loss_fn(y, y_logits)
-            train_loss += loss
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            acc = calculate_acc(y_logits, y)
-            train_accuracy += acc
-    train_loss /= NUM_TRAIN_TENSORS
-    train_accuracy /= NUM_TRAIN_TENSORS
+    for _, (X, y) in enumerate(zip(train_dataset["X"], train_dataset["y"])):
+        y_logits = model.forward(X)
+        y_logits = torch.reshape(y_logits, (-1,))
+        loss = loss_fn(y_logits, y)
+        train_loss += loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        acc = calculate_acc(y_logits, y)
+        train_accuracy += acc
+    print(train_accuracy)
+    train_loss = train_loss/NUM_TRAIN_TENSORS
+    train_accuracy = train_accuracy/NUM_TRAIN_TENSORS
     end = time.time()
     total_train_time = end-start
     return train_loss, train_accuracy, total_train_time
@@ -171,18 +173,38 @@ def test(loss_fn, model, test_dataset):
     test_accuracy = 0
     start = time.time()
     with torch.inference_mode():
-        for X in test_dataset["X"]:
-            for y in test_dataset["y"]:
-                y_logits = model.forward(X)
-                loss = loss_fn(y_logits, y)
-                test_loss += loss
-                acc = calculate_acc(y_logits, y)
-                test_accuracy += acc
-        test_loss /= NUM_TEST_TENSORS
-        test_accuracy /= NUM_TEST_TENSORS
+        for _, (X, y) in enumerate(zip(test_dataset["X"], test_dataset["y"])):
+            y_logits = model.forward(X)
+            y_logits = torch.reshape(y_logits, (-1,))
+            loss = loss_fn(y_logits, y)
+            test_loss += loss
+            acc = calculate_acc(y_logits, y)
+            test_accuracy += acc
+        test_loss = test_loss/NUM_TEST_TENSORS
+        test_accuracy = test_accuracy/NUM_TEST_TENSORS
         end = time.time()
         total_test_time = end-start
         return test_loss, test_accuracy, total_test_time
+
+
+def save_model(model):
+    if not USER_INPUT:
+        # You can change this code below in order to save the model if you want.
+        print("No save -_-")
+        return 0
+    save = input("Do you want to save this model?: ")
+    if not (save == "yes" or save == "Yes"):
+        print("This model shall not be saved.")
+        return 0
+    model_path = Path(input("What file do you want to save your model in? \n"
+                            "If you input a file that dose not exist. One will be created for you: "))
+    model_path.mkdir(parents=True, exist_ok=True)
+    model_name = input("What do you want your model dict's name to be?: ")+".pth"
+    model_save_path = model_path/model_name
+    print("Now downloading the model.....")
+    # This will save the model dict. If you want to save the entire model then change this code to do so
+    torch.save(obj=model.state_dict(), f=model_save_path)
+    print("Model successfully saved! YIPPEE!!!")
 
 
 # I am using a main function for once.
@@ -191,15 +213,16 @@ def main():
     hidden_layers, hidden_features, learning_rate, epochs = get_user_input()
     model = AIModel(input_features=INPUT_FEATURES, hidden_features=hidden_features,
                     hidden_layers=hidden_layers, output_features=OUTPUT_FEATURES)
-    loss_fn = nn.BCEWithLogitsLoss  # BCEWithLogitsLoss is used for multi label classification
+    loss_fn = nn.BCEWithLogitsLoss()  # BCEWithLogitsLoss is used for multi label classification
     optimizer = torch.optim.SGD(params=model.parameters(), lr=learning_rate)
 
     for epoch in range(epochs):
         train_loss, train_accuracy, total_train_time = train(loss_fn, optimizer, model, train_dataset)
         test_loss, test_accuracy, total_test_time = test(loss_fn, model, test_dataset)
         print(f"\nEpoch: {epoch}\n"
-              f"train loss: {test_loss:.4f} | train accuracy: {train_accuracy:.3f}% | train time: {total_train_time:.2f}."
+              f"train loss: {train_loss:.4f} | train accuracy: {train_accuracy:.3f}% | train time: {total_train_time:.2f}."
               f"\ntest loss: {test_loss:.4f} | test accuracy: {test_accuracy:.3f}% | test time: {total_test_time:.2f}.")
+    save_model(model)
 
 
 if __name__ == "__main__":
