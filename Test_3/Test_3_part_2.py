@@ -2,6 +2,7 @@ import pygame
 import torch
 from torch import nn
 import random
+from pathlib import Path
 
 # window
 WINDOW_SIZE_X, WINDOW_SIZE_Y = 1100, 600
@@ -134,7 +135,7 @@ class AIObject:
             self.total_collisions += 1
             if self.collision_relocate:
                 self.goal.relocate_goal(timer)
-                
+
     def print_results(self, timer):
         print(f"The AI model {self.name} collided with the goal object {self.total_collisions} times. \n"
               f"The AI did this within {timer/1000} seconds.")
@@ -259,6 +260,22 @@ def simulation_display(goal, ai, target):
     pygame.display.update()
 
 
+def save_model(model):
+    save = input("Do you want to save this model?: ")
+    if not (save == "yes" or save == "Yes"):
+        print("This model shall not be saved.")
+        return 0
+    model_path = Path(input("What file do you want to save your model in? \n"
+                            "If you input a file that dose not exist. One will be created for you: "))
+    model_path.mkdir(parents=True, exist_ok=True)
+    model_name = input("What do you want your model dict's name to be?: ")+".pth"
+    model_save_path = model_path/model_name
+    print("Now downloading the model.....")
+    # This will save the model dict. If you want to save the entire model then change this code to do so
+    torch.save(obj=model.state_dict(), f=model_save_path)
+    print("Model successfully saved! YIPPEE!!!")
+
+
 def main():
     running = True
     model_0 = AIModel(input_features=INPUT_FEATURES,
@@ -297,6 +314,7 @@ def main():
         ai_object_0.check_for_collisions(current_time)
         simulation_display(goal, ai_object_0, target)
     ai_object_0.print_results(current_time)
+    save_model(model_0)
 
 
 if __name__ == "__main__":
