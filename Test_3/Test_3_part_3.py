@@ -24,7 +24,7 @@ INPUT_FEATURES = 2
 OUTPUT_FEATURES = 2
 
 GOAL_DIMS = 30
-GOAL_TIME = 1000
+GOAL_TIME = 20000
 
 AI_OBJECT_DIMS = 50
 AI_MODEL_1_STATE_DICT_PATH = "test_3_models/model001_hl1_hf64_t3.pth"
@@ -89,7 +89,8 @@ class AIModel(nn.Module):
 
 
 class AIObject:
-    def __init__(self, model, dims, optimizer, target, color, goal, physics_manager, learning=False, loss_fn=nn.BCEWithLogitsLoss()):
+    def __init__(self, model, dims, optimizer, target, color, goal, physics_manager, name,
+                 collision_relocate=False,learning=False, loss_fn=nn.BCEWithLogitsLoss()):
         self.model = model
         self.learning = learning
         self.ai_rect = pygame.Rect((WINDOW_SIZE_X/2-dims/2), (WINDOW_SIZE_Y/2-dims/2), dims, dims)
@@ -100,6 +101,9 @@ class AIObject:
         self.goal = goal
         self.physics_manager = physics_manager
         self.dims = dims
+        self.total_collisions = 0
+        self.collision_relocate = collision_relocate
+        self.name = name
 
     def predict_and_enact_movement(self):
         goal_x, goal_y = self.goal.get_goal_location()
@@ -125,6 +129,16 @@ class AIObject:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+    def check_for_collisions(self, timer):
+        if self.ai_rect.colliderect(self.goal.goal_rect):
+            self.total_collisions += 1
+            if self.collision_relocate:
+                self.goal.relocate_goal(timer)
+
+    def print_results(self, timer):
+        print(f"The AI model {self.name} collided with the goal object {self.total_collisions} times. \n"
+              f"The AI did this within {timer/1000} seconds.")
 
 
 class Target:
@@ -275,6 +289,8 @@ def main():
         color=RED,
         goal=goal,
         physics_manager=physics_manager_ai_0,
+        name="ai_object_0",
+        collision_relocate=True,
         learning=True
     )
     ai_object_1 = AIObject(
@@ -285,8 +301,11 @@ def main():
         color=PURPLE,
         goal=goal,
         physics_manager=physics_manager_ai_1,
+        name="ai_object_1",
+        collision_relocate=True,
         learning=True
     )
+    current_time = pygame.time.get_ticks()
     clock = pygame.time.Clock()
     while running:
         current_time = pygame.time.get_ticks()
@@ -298,7 +317,11 @@ def main():
         target.move()
         ai_object_0.predict_and_enact_movement()
         ai_object_1.predict_and_enact_movement()
+        ai_object_1.check_for_collisions(current_time)
+        ai_object_0.check_for_collisions(current_time)
         simulation_display(goal, ai_object_0, target, ai_object_1)
+    ai_object_0.print_results(current_time)
+    ai_object_1.print_results(current_time)
 
 
 if __name__ == "__main__":
