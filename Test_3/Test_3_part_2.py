@@ -23,6 +23,8 @@ LIGHT_BLUE = [0, 255, 255]
 LENIENCY = 25
 INPUT_FEATURES = 2
 OUTPUT_FEATURES = 2
+DEFAULT_HIDDEN_FEATURES = 64
+DEFAULT_HIDDEN_LAYERS = 1
 
 GOAL_DIMS = 30
 GOAL_TIME = 20000
@@ -280,8 +282,8 @@ def main():
     running = True
     model_0 = AIModel(input_features=INPUT_FEATURES,
                       output_features=OUTPUT_FEATURES,
-                      hidden_layers=1,
-                      hidden_features=64)
+                      hidden_layers=DEFAULT_HIDDEN_LAYERS,
+                      hidden_features=DEFAULT_HIDDEN_FEATURES)
     optimizer_0 = torch.optim.SGD(params=model_0.parameters(), lr=0.001)
     physics_manager_target = PhysicsManager()
     physics_manager_ai_0 = PhysicsManager()
@@ -313,6 +315,7 @@ def main():
         ai_object_0.predict_and_enact_movement()
         ai_object_0.check_for_collisions(current_time)
         simulation_display(goal, ai_object_0, target)
+    pygame.display.quit()
     ai_object_0.print_results(current_time)
     save_model(model_0)
 
