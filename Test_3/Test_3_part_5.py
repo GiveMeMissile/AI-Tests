@@ -290,8 +290,8 @@ def main():
                       output_features=OUTPUT_FEATURES,
                       hidden_layers=DEFAULT_HIDDEN_LAYERS,
                       hidden_features=DEFAULT_HIDDEN_FEATURES)
-    optimizer_0 = torch.optim.SGD(params=model_0.parameters(), lr=0.0001)
-    optimizer_4 = torch.optim.Adam(params=model_4.parameters(), lr=0.0001)
+    optimizer_0 = torch.optim.SGD(params=model_0.parameters(), lr=0.001)
+    optimizer_4 = torch.optim.SGD(params=model_4.parameters(), lr=0.0001)
     physics_manager_target = PhysicsManager()
     physics_manager_ai_0 = PhysicsManager()
     physics_manager_ai_4 = PhysicsManager()
@@ -341,6 +341,7 @@ def main():
     ai_object_0.print_results(current_time)
     ai_object_4.print_results(current_time)
     save_model(model_0)
+    save_model(model_4)
 
 
 if __name__ == "__main__":
