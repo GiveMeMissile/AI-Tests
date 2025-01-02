@@ -9,7 +9,7 @@ from pathlib import Path
 from pandas import DataFrame
 
 
-# 100 will be the default epoch value across all tests in test 4
+# 5 will be the default epoch value across all tests in test 4
 EPOCH = 5
 BATCH_SIZE = 32
 INPUT_FEATURES = 128
