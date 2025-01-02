@@ -9,11 +9,11 @@ from pathlib import Path
 from pandas import DataFrame
 
 
-# 100 will be the default epoch value across all tests
-EPOCH = 100
+# 5 will be the default epoch value across all tests
+EPOCH = 5
 BATCH_SIZE = 32
-MAX_LENGTH = 128
-INPUT_FEATURES = 128
+MAX_LENGTH = 256
+INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 1
 RNN_LAYERS = 2
@@ -172,17 +172,17 @@ def main():
         print(f"Epoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
               f"Train time: {train_time:.2f}\nTest loss: {test_loss:.4f}, Test accuracy: {test_accuracy:.3f}% | "
               f"Test time: {test_time:.2f}")
-        if epoch % 10 == 0:
-            results["Epoch"].append(epoch+1)
-            results["Train loss"].append(round(train_loss.detach().item(), 4))
-            results["Train accuracy"].append(round(train_accuracy, 3))
-            results["Train time"].append(round(train_time, 2))
-            results["Test loss"].append(round(test_loss.detach().item(), 4))
-            results["Test Accuracy"].append(round(test_accuracy, 3))
-            results["Test time"].append(round(test_time, 2))
+        results["Epoch"].append(epoch+1)
+        results["Train loss"].append(round(train_loss.detach().item(), 4))
+        results["Train accuracy"].append(round(train_accuracy, 3))
+        results["Train time"].append(round(train_time, 2))
+        results["Test loss"].append(round(test_loss.detach().item(), 4))
+        results["Test Accuracy"].append(round(test_accuracy, 3))
+        results["Test time"].append(round(test_time, 2))
     create_and_display_dataframe(results)
     save_model(model)
 
 
 if __name__ == "__main__":
     main()
+   main()
