@@ -1,0 +1,4 @@
+Baseline: 70%
+RNN: 72%
+CNN: DNE
+LSTM: DNE
