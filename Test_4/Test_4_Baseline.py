@@ -9,12 +9,13 @@ from pathlib import Path
 from pandas import DataFrame
 
 
-# 5 will be the default epoch value across all tests in test 4
+# 5 will be the default epoch value across all tests
 EPOCH = 5
 BATCH_SIZE = 32
-INPUT_FEATURES = 128
+MAX_LENGTH = 256
+INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
-HIDDEN_LAYERS = 1
+HIDDEN_LAYERS = 2
 HIDDEN_FEATURES = 64
 
 
@@ -39,7 +40,7 @@ def get_data():
 
     # This is based off of code from huggingface because I don't fully know how to tokenize stuff... yay
     def tokenize(example):
-        return tokenizer(example["text"], padding="max_length", truncation=True, max_length=128)
+        return tokenizer(example["text"], padding="max_length", truncation=True, max_length=MAX_LENGTH)
 
     tokenized_train_dataset = train_dataset.map(tokenize, batched=True, batch_size=BATCH_SIZE)
     tokenized_test_dataset = test_dataset.map(tokenize, batched=True, batch_size=BATCH_SIZE)
@@ -154,7 +155,7 @@ def create_and_display_dataframe(dictionary):
 
 
 def main():
-    user_login()
+    # user_login()
     train_dataloader, test_dataloader = get_data()
     model = BaselineModel(input_features=INPUT_FEATURES, output_features=OUTPUT_FEATURES,
                           hidden_layers=HIDDEN_LAYERS, hidden_features=HIDDEN_FEATURES)
