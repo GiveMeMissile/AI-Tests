@@ -86,13 +86,10 @@ class AdaptiveCNNModel(nn.Module):
         )
         self.num_hidden_layers = num_hidden_layers
 
-    def forward(self, x, show_hidden=False):
+    def forward(self, xe):
         x = self.input_layer(x)
         for i in range(self.num_hidden_layers):
             x = self.hidden_layer(x)
-            if show_hidden:
-                print(f"Hidden layer {i+1}")
-                print(x.shape)
         x = self.output_layer(x)
         return x
 
