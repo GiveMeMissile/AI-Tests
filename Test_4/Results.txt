@@ -2,3 +2,6 @@ Baseline: 70%
 RNN: 72%
 CNN: DNE
 LSTM: DNE
+Complex RNN: DNE
+Complex CNN: 75%(train)/72%(test), (Time consuming: 140s)
+Complex LSTM: DNE
