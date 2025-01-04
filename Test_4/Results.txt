@@ -3,4 +3,4 @@ RNN: 72%(train/test), Time: 13s per epoch
 CNN: 65%(train)/66%(test), Time: 40s per epoch
 
 Extra info:
-Complex CNN: 75%(train)/72%(test), Time: 140s per epoch
+Complex CNN (Premade in Test 2): 75%(train)/72%(test), Time: 140s per epoch
