@@ -34,6 +34,7 @@ def user_login():
 
 
 def get_data():
+    print("Processing data...")
     train_dataset = load_dataset("ziq/depression_tweet", split="train")
     test_dataset = load_dataset("ziq/depression_tweet", split="test")
     # Using bert-base-uncased for tokenizing the dataset
@@ -55,6 +56,7 @@ def get_data():
     )
     train_dataloader = DataLoader(dataset=tokenized_train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     test_dataloader = DataLoader(dataset=tokenized_test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    print("Data processed")
     return train_dataloader, test_dataloader
 
 
@@ -165,6 +167,7 @@ def main():
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
+    print("Starting training process.")
 
     for epoch in range(epochs):
         train_loss, train_accuracy, train_time = train(train_dataloader, model, loss_fn, optimizer)
