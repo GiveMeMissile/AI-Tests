@@ -74,6 +74,12 @@ class ClassificationRNN(nn.Module):
         self.output_layer = nn.Linear(in_features=hidden_features, out_features=output_features)
 
     def forward(self, x):
+        # h_0 = torch.zeros(self.rnn_layers, x.size(0), self.hidden_features)
+        # For some reason using the code above with text classification makes the model worse.
+        # The accuracy stays at around 56%.
+        # This is most likely due to my own error and a better programmer most likely would be able to use h_0 without this lack of accuracy.
+        # Or rnns are not made for this type of classification with the lack of sequencing in the dataset.
+        
         x, _ = self.input_RNN_layer(x)
         x = self.output_layer(x)
         return x
