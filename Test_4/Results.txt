@@ -1,7 +1,9 @@
 Baseline: 70%(train/test), Time: 6s per epoch
 RNN: 72%(train/test), Time: 13s per epoch
 CNN: 65%(train)/66%(test), Time: 40s per epoch
+GRU: 63%(train/test), Time: 40s per epoch
 LSTM: DNE
 Complex RNN: DNE
 Complex CNN: 75%(train)/72%(test), Time: 140s per epoch
 Complex LSTM: DNE
+Complex GRU: DNE
