@@ -19,6 +19,7 @@ TRANSFORM = transforms.Compose([
 ])
 
 
+# I wannacry
 def transform(examples):
     examples["pixel_values"] = [TRANSFORM(image) for image in examples["image"]]
     return examples
