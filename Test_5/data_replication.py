@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset, Image
 from torchvision import transforms
 from os import cpu_count
+from random import shuffle
 
 NUM_WORKERS = cpu_count()
 TRAIN_DATA = "copycat-project/laion2b6plus_fish"
@@ -16,20 +17,26 @@ TRANSFORM = transforms.Compose([
 ])
 
 
-def transform(examples):
-    examples["pixel_values"] = [TRANSFORM(image) for image in examples["image"]]
-    return examples
-
-
 class DataPreparer:
     def __init__(self, data):
         self.dataset = data
 
-    def shuffle_data(self):
+    def shuffle_data(self, dataset=None):
+        if dataset is None:
+            dataset = self.dataset
+        merged_data = list(zip(dataset["image"], dataset["category"]))
+        shuffle(merged_data)
+        dataset["image"], dataset["category"] = zip(*merged_data)
+        self.dataset["image"] = dataset["image"]
+        self.dataset["category"] = dataset["category"]
+        return dataset
+
+    def batch_data(self, dataset):
         pass
 
-    def batch_data(self):
-        pass
+    def transform(self, examples):
+        examples["pixel_values"] = [TRANSFORM(image) for image in examples["image"]]
+        return examples
 
     def synthesize_data(self):
         print("\nSynthesizing data...")
@@ -41,9 +48,8 @@ class DataPreparer:
             replicated_data.append(X)
             replicated_category.append("non_fish")
 
-        self.dataset.set_transform(transform)
+        self.dataset.set_transform(self.transform)
         self.dataset.to_dict()
-        # print(datasets["category"])
 
         pixel_values = []
 
@@ -57,6 +63,8 @@ class DataPreparer:
 
         data = {"image": pixel_values + replicated_data,
                 "category": category + replicated_category}
+
+        self.dataset = data
 
         print("Data successfully synthesized")
         return data
