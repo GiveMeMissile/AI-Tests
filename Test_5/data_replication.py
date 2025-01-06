@@ -28,20 +28,29 @@ def get_data():
     datasets = datasets.with_format(type="torch")
 
     replicated_data = []
-    category = []
+    replicated_category = []
 
     for i in range(len(datasets)):
         X = torch.rand(size=(3, IMAGE_DIMENSIONS, IMAGE_DIMENSIONS))
         replicated_data.append(X)
-        category.append("non_fish")
+        replicated_category.append("non_fish")
 
     datasets.set_transform(transform)
     datasets.to_dict()
     # print(datasets["category"])
 
-    data = {"image": ((datasets["image"])["pixel_values"]) + replicated_data,
-            "category": datasets["category"] + category}
-    print(data["image"])
+    pixel_values = []
+
+    for values in datasets:
+        pixel_values.append(values["pixel_values"])
+
+    category = []
+
+    for categories in datasets:
+        category.append(categories["category"])
+
+    data = {"image": pixel_values + replicated_data,
+            "category": category + replicated_category}
     print("finished")
     return data
 
