@@ -6,6 +6,8 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from random import shuffle
 from time import time
+from pandas import DataFrame
+from pathlib import Path
 
 # CONSTANTS!!!
 TRAIN_DATA = "copycat-project/laion2b6plus_fish"
@@ -68,9 +70,9 @@ class DataPreparer:
         categories = []
         for category in dataset["category"]:
             if category == "fish":
-                y = torch.tensor([1])
-            else:
                 y = torch.tensor([0])
+            else:
+                y = torch.tensor([1])
             categories.append(y)
 
         dataset["category"] = categories
@@ -204,10 +206,12 @@ def train(data, optimizer, loss_fn, model):
     train_accuracy = 0
 
     for batch, (X, y) in enumerate(zip(data["X"], data["y"])):
+        X = X.type(torch.float32)
+        y = y.type(torch.float32)
         y_logits = model.forward(X)
 
         # There is 100% gonna be a shape error lol
-        loss = loss_fn(y_logits, y)
+        loss = loss_fn(y_logits.squeeze(dim=1), y.squeeze(dim=1))
         train_loss += loss
 
         optimizer.zero_grad()
@@ -215,7 +219,7 @@ def train(data, optimizer, loss_fn, model):
         loss.backward()
         optimizer.step()
 
-        accuracy = calculate_accuracy(y_logits, y)
+        accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y.squeeze(dim=1))
         train_accuracy += accuracy
 
     train_accuracy = train_accuracy/len(data["X"])
@@ -236,12 +240,14 @@ def test(data, loss_fn, model):
 
     with torch.inference_mode():
         for batch, (X, y) in enumerate(data):
+            X = X.type(torch.float32)
+            y = y.type(torch.float32)
             y_logits = model.forward(X)
 
-            loss = loss_fn(y_logits, y)
+            loss = loss_fn(y_logits.squeeze(dim=1), y)
             test_loss += loss
 
-            accuracy = calculate_accuracy(y_logits, y)
+            accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y)
             test_accuracy += accuracy
 
         test_loss = test_loss/len(data)
@@ -251,6 +257,29 @@ def test(data, loss_fn, model):
         total_time = end-start
 
         return test_loss, test_accuracy, total_time
+
+
+def create_and_display_dataframe(dictionary):
+    # This function is used to create a dataframe of the model results using PANDASSSSSSSSSSSSSSSSS!!!!
+    dataframe = DataFrame(dictionary)
+    print(dataframe)
+    return dataframe
+
+
+def save_model(model):
+    save = input("Do you want to save this model?: ")
+    if not (save == "yes" or save == "Yes"):
+        print("This model shall not be saved.")
+        return 0
+    model_path = Path(input("What file do you want to save your model in? \n"
+                            "If you input a file that dose not exist. One will be created for you: "))
+    model_path.mkdir(parents=True, exist_ok=True)
+    model_name = input("What do you want your model dict's name to be?: ")+".pth"
+    model_save_path = model_path/model_name
+    print("Now downloading the model.....")
+    # This will save the model dict. If you want to save the entire model then change this code to do so
+    torch.save(obj=model.state_dict(), f=model_save_path)
+    print("Model successfully saved! YIPPEE!!!")
 
 
 def main():
@@ -269,8 +298,24 @@ def main():
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
 
+    print("\nStarting training process...")
+
     for epoch in range(epochs):
-        pass
+        train_loss, train_accuracy, train_time = train(train_data, optimizer, loss_fn, model)
+        test_loss, test_accuracy, test_time = test(test_data, loss_fn, model)
+        print(f"\nEpoch: {epoch+1}\n"
+              f"Train loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | Train time: {train_time:.3f}s\n"
+              f"Test loss: {test_loss:.4f} | Test accuracy: {test_accuracy:.3f}% | Test time: {test_time:.3f}s")
+        results["Epoch"].append(epoch+1)
+        results["Train loss"].append(train_loss.detach())
+        results["Train accuracy"].append(round(train_accuracy, 3))
+        results["Train time"].append(round(train_time, 3))
+        results["Test loss"].append(test_loss.detach())
+        results["Test Accuracy"].append(round(test_accuracy, 3))
+        results["Test time"].append(round(test_time, 3))
+
+    create_and_display_dataframe(results)
+    save_model(model)
 
 
 if __name__ == "__main__":
