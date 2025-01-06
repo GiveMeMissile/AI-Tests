@@ -21,39 +21,62 @@ def transform(examples):
     return examples
 
 
+class DataPreparer:
+    def __init__(self, data):
+        self.dataset = data
+
+    def shuffle_data(self):
+        pass
+
+    def batch_data(self):
+        pass
+
+    def synthesize_data(self):
+        print("\nSynthesizing data...")
+        replicated_data = []
+        replicated_category = []
+
+        for i in range(len(self.dataset)):
+            X = torch.rand(size=(3, IMAGE_DIMENSIONS, IMAGE_DIMENSIONS))
+            replicated_data.append(X)
+            replicated_category.append("non_fish")
+
+        self.dataset.set_transform(transform)
+        self.dataset.to_dict()
+        # print(datasets["category"])
+
+        pixel_values = []
+
+        for values in self.dataset:
+            pixel_values.append(values["pixel_values"])
+
+        category = []
+
+        for categories in self.dataset:
+            category.append(categories["category"])
+
+        data = {"image": pixel_values + replicated_data,
+                "category": category + replicated_category}
+
+        print("Data successfully synthesized")
+        return data
+
+
 def get_data():
     print("Getting huggingface dataset...")
     datasets = load_dataset(TRAIN_DATA, split="train[75%:]")
     datasets = datasets.cast_column("image", Image(mode="RGB"))
     datasets = datasets.with_format(type="torch")
+    print("Got dataset")
 
-    replicated_data = []
-    replicated_category = []
+    return datasets
 
-    for i in range(len(datasets)):
-        X = torch.rand(size=(3, IMAGE_DIMENSIONS, IMAGE_DIMENSIONS))
-        replicated_data.append(X)
-        replicated_category.append("non_fish")
 
-    datasets.set_transform(transform)
-    datasets.to_dict()
-    # print(datasets["category"])
-
-    pixel_values = []
-
-    for values in datasets:
-        pixel_values.append(values["pixel_values"])
-
-    category = []
-
-    for categories in datasets:
-        category.append(categories["category"])
-
-    data = {"image": pixel_values + replicated_data,
-            "category": category + replicated_category}
-    print("finished")
-    return data
+def main():
+    data = get_data()
+    data_handler = DataPreparer(data=data)
+    dataset = data_handler.synthesize_data()
 
 
 if __name__ == "__main__":
-    get_data()
+    main()
