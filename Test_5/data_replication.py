@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
 from datasets import load_dataset, Image
 from torchvision import transforms
 from os import cpu_count
@@ -31,34 +30,36 @@ class DataPreparer:
         self.dataset["category"] = dataset["category"]
         return dataset
 
-    def batch_data(self, dataset):
+    def batch_data(self, dataset=None):
         pass
 
     def transform(self, examples):
         examples["pixel_values"] = [TRANSFORM(image) for image in examples["image"]]
         return examples
 
-    def synthesize_data(self):
+    def synthesize_data(self, dataset=None):
+        if dataset is None:
+            dataset = self.dataset
         print("\nSynthesizing data...")
         replicated_data = []
         replicated_category = []
 
-        for i in range(len(self.dataset)):
+        for i in range(len(dataset)):
             X = torch.rand(size=(3, IMAGE_DIMENSIONS, IMAGE_DIMENSIONS))
             replicated_data.append(X)
             replicated_category.append("non_fish")
 
-        self.dataset.set_transform(self.transform)
-        self.dataset.to_dict()
+        dataset.set_transform(self.transform)
+        dataset.to_dict()
 
         pixel_values = []
 
-        for values in self.dataset:
+        for values in dataset:
             pixel_values.append(values["pixel_values"])
 
         category = []
 
-        for categories in self.dataset:
+        for categories in dataset:
             category.append(categories["category"])
 
         data = {"image": pixel_values + replicated_data,
@@ -83,7 +84,9 @@ def get_data():
 def main():
     data = get_data()
     data_handler = DataPreparer(data=data)
-    dataset = data_handler.synthesize_data()
+    data_handler.synthesize_data()
+    dataset = data_handler.shuffle_data()
+    print(dataset["category"])
 
 
 if __name__ == "__main__":
