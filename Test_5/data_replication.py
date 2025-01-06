@@ -21,43 +21,29 @@ def transform(examples):
     return examples
 
 
-def augment_data(example):
-    augmented_image = torch.randn(size=(3, IMAGE_DIMENSIONS, IMAGE_DIMENSIONS))
-    example["image"] = [example["image"], augmented_image]
-    example["category"] = [example["category"], "non_fish"]
-    return example
-
-
 def get_data():
     print("Getting huggingface dataset...")
-    datasets = load_dataset(TRAIN_DATA, split="train[10%:]")
+    datasets = load_dataset(TRAIN_DATA, split="train[75%:]")
     datasets = datasets.cast_column("image", Image(mode="RGB"))
     datasets = datasets.with_format(type="torch")
 
-    '''
+    replicated_data = []
+    category = []
+
     for i in range(len(datasets)):
-        X = torch.randn(size=(3, IMAGE_DIMENSIONS, IMAGE_DIMENSIONS))
+        X = torch.rand(size=(3, IMAGE_DIMENSIONS, IMAGE_DIMENSIONS))
         replicated_data.append(X)
         category.append("non_fish")
-    
 
-    data = {"image": datasets["image"] + replicated_data,
-            "category": datasets["category"] + category}
-
-    print("DATA CREATED")
-
-    replicated_dataset = datasets.from_dict(data)
-
-    print("Transforming data...")
-    replicated_dataset.data(transform)
-    '''
-
-    datasets = datasets.map(augment_data, batched=False)
     datasets.set_transform(transform)
+    datasets.to_dict()
+    # print(datasets["category"])
 
-    train_dataloader = DataLoader(dataset=datasets, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=True)
-    print("Train data has been fully collected.")
-    return train_dataloader
+    data = {"image": ((datasets["image"])["pixel_values"]) + replicated_data,
+            "category": datasets["category"] + category}
+    print(data["image"])
+    print("finished")
+    return data
 
 
 if __name__ == "__main__":
