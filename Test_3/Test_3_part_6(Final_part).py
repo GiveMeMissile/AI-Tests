@@ -22,8 +22,8 @@ WHITE = [255, 255, 255]
 
 # AI info
 LENIENCY = 25
-INPUT_FEATURES = 2
-OUTPUT_FEATURES = 2
+INPUT_FEATURES = 4
+OUTPUT_FEATURES = 4
 DEFAULT_HIDDEN_FEATURES = 64
 DEFAULT_HIDDEN_LAYERS = 1
 
@@ -38,7 +38,7 @@ FRICTION = 0.5
 MAX_VELOCITY = 10
 
 # Saved models
-AI_MODEL_1_STATE_DICT_PATH = "test_3_models/model001_hl1_hf64_t3.pth"
+AI_MODEL_1_STATE_DICT_PATH = "test_3_models/model004_hl1_hf64_t3.pth"
 
 
 class Goal:
@@ -114,8 +114,9 @@ class AIObject:
     def predict_and_enact_movement(self):
         goal_x, goal_y = self.goal.get_goal_location()
         ai_x, ai_y = self.get_location()
-        X = torch.tensor([[ai_x, ai_y], [goal_x, goal_y]], dtype=torch.float32)
-        y_logits = torch.reshape(self.model.forward(X), (-1,))
+        X = torch.tensor([[ai_x, ai_y, goal_x, goal_y]], dtype=torch.float32)
+        y_logits = self.model(X)
+        y_logits = y_logits.squeeze(dim=0)
         y = torch.sigmoid(y_logits).type(torch.float32)
         if self.learning:
             self.learn(y_logits)
@@ -131,7 +132,7 @@ class AIObject:
 
     def learn(self, y_logits):
         y_target = self.target.determine_direction(object=self)
-        loss = self.loss_fn(y_logits, y_target.type(torch.float32))
+        loss = self.loss_fn(y_logits.squeeze(dim=0), y_target.type(torch.float32))
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -299,8 +300,8 @@ def main():
                       hidden_features=DEFAULT_HIDDEN_FEATURES*4)
     model_3 = AIModel(input_features=INPUT_FEATURES,
                       output_features=OUTPUT_FEATURES,
-                      hidden_features=DEFAULT_HIDDEN_LAYERS*4,
-                      hidden_layers=DEFAULT_HIDDEN_FEATURES)
+                      hidden_features=DEFAULT_HIDDEN_FEATURES,
+                      hidden_layers=DEFAULT_HIDDEN_LAYERS*4)
     model_4 = AIModel(input_features=INPUT_FEATURES,
                       output_features=OUTPUT_FEATURES,
                       hidden_layers=DEFAULT_HIDDEN_LAYERS,
