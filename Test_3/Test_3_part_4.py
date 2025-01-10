@@ -21,8 +21,8 @@ LIGHT_BLUE = [0, 255, 255]
 
 # AI info
 LENIENCY = 25
-INPUT_FEATURES = 2
-OUTPUT_FEATURES = 2
+INPUT_FEATURES = 4
+OUTPUT_FEATURES = 4
 DEFAULT_HIDDEN_FEATURES = 64
 DEFAULT_HIDDEN_LAYERS = 1
 
@@ -110,8 +110,9 @@ class AIObject:
     def predict_and_enact_movement(self):
         goal_x, goal_y = self.goal.get_goal_location()
         ai_x, ai_y = self.get_location()
-        X = torch.tensor([[ai_x, ai_y], [goal_x, goal_y]], dtype=torch.float32)
-        y_logits = torch.reshape(self.model.forward(X), (-1,))
+        X = torch.tensor([[ai_x, ai_y, goal_x, goal_y]], dtype=torch.float32)
+        y_logits = self.model(X)
+        y_logits = y_logits.squeeze(dim=0)
         y = torch.sigmoid(y_logits).type(torch.float32)
         if self.learning:
             self.learn(y_logits)
@@ -127,7 +128,7 @@ class AIObject:
 
     def learn(self, y_logits):
         y_target = self.target.determine_direction(object=self)
-        loss = self.loss_fn(y_logits, y_target.type(torch.float32))
+        loss = self.loss_fn(y_logits.squeeze(dim=0), y_target.type(torch.float32))
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -292,8 +293,8 @@ def main():
                       hidden_features=DEFAULT_HIDDEN_FEATURES*4)
     model_3 = AIModel(input_features=INPUT_FEATURES,
                       output_features=OUTPUT_FEATURES,
-                      hidden_features=DEFAULT_HIDDEN_LAYERS*4,
-                      hidden_layers=DEFAULT_HIDDEN_FEATURES)
+                      hidden_features=DEFAULT_HIDDEN_FEATURES,
+                      hidden_layers=DEFAULT_HIDDEN_LAYERS*4)
     optimizer_0 = torch.optim.SGD(params=model_0.parameters(), lr=0.001)
     optimizer_2 = torch.optim.SGD(params=model_2.parameters(), lr=0.001)
     optimizer_3 = torch.optim.SGD(params=model_3.parameters(), lr=0.001)
@@ -348,7 +349,6 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-        goal.relocate_goal(current_time)
         target.move()
         ai_object_0.predict_and_enact_movement()
         ai_object_0.check_for_collisions(current_time)
