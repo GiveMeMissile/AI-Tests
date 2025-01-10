@@ -12,11 +12,12 @@ from pandas import DataFrame
 # 5 will be the default epoch value across all tests
 EPOCH = 5
 BATCH_SIZE = 32
-MAX_LENGTH = 256
+MAX_LENGTH = 512
 INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 2
 HIDDEN_FEATURES = 64
+DATASET = "thePixel42/depression-detection"
 
 
 def user_login():
@@ -34,8 +35,8 @@ def user_login():
 
 def get_data():
     print("Processing data...")
-    train_dataset = load_dataset("ziq/depression_tweet", split="train")
-    test_dataset = load_dataset("ziq/depression_tweet", split="test")
+    train_dataset = load_dataset(DATASET, split="train")
+    test_dataset = load_dataset(DATASET, split="test")
     # Using bert-base-uncased for tokenizing the dataset
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
@@ -167,7 +168,6 @@ def main():
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
-    print("Starting training process.")
 
     for epoch in range(epochs):
         train_loss, train_accuracy, train_time = train(train_dataloader, model, loss_fn, optimizer)
