@@ -21,8 +21,8 @@ LIGHT_BLUE = [0, 255, 255]
 
 # AI info
 LENIENCY = 25
-INPUT_FEATURES = 2
-OUTPUT_FEATURES = 2
+INPUT_FEATURES = 4
+OUTPUT_FEATURES = 4
 DEFAULT_HIDDEN_FEATURES = 64
 DEFAULT_HIDDEN_LAYERS = 1
 
@@ -30,7 +30,7 @@ GOAL_DIMS = 30
 GOAL_TIME = 20000
 
 AI_OBJECT_DIMS = 50
-AI_MODEL_1_STATE_DICT_PATH = "test_3_models/model001_hl1_hf64_t3.pth"
+AI_MODEL_1_STATE_DICT_PATH = "test_3_models/model004_hl1_hf64_t3.pth"
 
 # Physics and friends
 ACCELERATION = 1
@@ -93,7 +93,7 @@ class AIModel(nn.Module):
 
 class AIObject:
     def __init__(self, model, dims, optimizer, target, color, goal, physics_manager, name,
-                 collision_relocate=False,learning=False, loss_fn=nn.BCEWithLogitsLoss()):
+                 collision_relocate=False, learning=False, loss_fn=nn.BCEWithLogitsLoss()):
         self.model = model
         self.learning = learning
         self.ai_rect = pygame.Rect((WINDOW_SIZE_X/2-dims/2), (WINDOW_SIZE_Y/2-dims/2), dims, dims)
@@ -104,16 +104,18 @@ class AIObject:
         self.goal = goal
         self.physics_manager = physics_manager
         self.dims = dims
-        self.total_collisions = 0
         self.collision_relocate = collision_relocate
+        self.total_collisions = 0
         self.name = name
 
     def predict_and_enact_movement(self):
         goal_x, goal_y = self.goal.get_goal_location()
         ai_x, ai_y = self.get_location()
-        X = torch.tensor([[ai_x, ai_y], [goal_x, goal_y]], dtype=torch.float32)
-        y_logits = torch.reshape(self.model.forward(X), (-1,))
+        X = torch.tensor([[ai_x, ai_y, goal_x, goal_y]], dtype=torch.float32)
+        y_logits = self.model(X)
         y = torch.sigmoid(y_logits).type(torch.float32)
+        y = y.squeeze(dim=0)
+        print(y.shape)
         if self.learning:
             self.learn(y_logits)
         self.physics_manager.calculate_velocity(self.ai_rect, y, self.dims)
@@ -128,7 +130,7 @@ class AIObject:
 
     def learn(self, y_logits):
         y_target = self.target.determine_direction(object=self)
-        loss = self.loss_fn(y_logits, y_target.type(torch.float32))
+        loss = self.loss_fn(y_logits.squeeze(dim=0), y_target.type(torch.float32))
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
