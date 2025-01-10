@@ -22,8 +22,8 @@ WHITE = [255, 255, 255]
 
 # AI info
 LENIENCY = 25
-INPUT_FEATURES = 2
-OUTPUT_FEATURES = 2
+INPUT_FEATURES = 4
+OUTPUT_FEATURES = 4
 DEFAULT_HIDDEN_FEATURES = 64
 DEFAULT_HIDDEN_LAYERS = 1
 
@@ -111,8 +111,9 @@ class AIObject:
     def predict_and_enact_movement(self):
         goal_x, goal_y = self.goal.get_goal_location()
         ai_x, ai_y = self.get_location()
-        X = torch.tensor([[ai_x, ai_y], [goal_x, goal_y]], dtype=torch.float32)
-        y_logits = torch.reshape(self.model.forward(X), (-1,))
+        X = torch.tensor([[ai_x, ai_y, goal_x, goal_y]], dtype=torch.float32)
+        y_logits = self.model(X)
+        y_logits = y_logits.squeeze(dim=0)
         y = torch.sigmoid(y_logits).type(torch.float32)
         if self.learning:
             self.learn(y_logits)
@@ -128,7 +129,7 @@ class AIObject:
 
     def learn(self, y_logits):
         y_target = self.target.determine_direction(object=self)
-        loss = self.loss_fn(y_logits, y_target.type(torch.float32))
+        loss = self.loss_fn(y_logits.squeeze(dim=0), y_target.type(torch.float32))
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
