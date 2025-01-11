@@ -13,12 +13,13 @@ from math import sqrt
 # 5 will be the default epoch value across all tests
 EPOCH = 5
 BATCH_SIZE = 32
-MAX_LENGTH = 256
+MAX_LENGTH = int(512/2)  # The max length has to be halved so the sqrt of the mex len will be 16 rather than a float
 LENGTH = int(sqrt(MAX_LENGTH))
 INPUT_FEATURES = 1  # One channel for text
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 2
 HIDDEN_FEATURES = 64
+DATASET = "thePixel42/depression-detection"
 
 
 def user_login():
@@ -36,8 +37,8 @@ def user_login():
 
 def get_data():
     print("Processing data...")
-    train_dataset = load_dataset("ziq/depression_tweet", split="train")
-    test_dataset = load_dataset("ziq/depression_tweet", split="test")
+    train_dataset = load_dataset(DATASET, split="train")
+    test_dataset = load_dataset(DATASET, split="test")
     # Using bert-base-uncased for tokenizing the dataset
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
@@ -196,6 +197,9 @@ def main():
     create_and_display_dataframe(results)
     save_model(model)
 
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
