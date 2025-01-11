@@ -1,6 +1,6 @@
-Baseline: 75%(train/test), Time: 40s per epoch, loss: .53(train/test)
+Baseline: 75%(train/test), Time: 40s per epoch, loss: 0.53(train/test)
+CNN: 76%(train/test), Time: 275s per epoch, loss: 0.535(train/test)
 RNN: DNE
-CNN: DNE
 LSTM: DNE
 Transformer (Encoder): DNE
 
