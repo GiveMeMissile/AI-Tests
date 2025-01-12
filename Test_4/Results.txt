@@ -1,8 +1,8 @@
-Baseline: 75%(train/test), Time: 40s per epoch, loss: 0.53(train/test)
-CNN: 76%(train/test), Time: 275s per epoch, loss: 0.535(train/test)
-RNN: DNE
-LSTM: DNE
-Transformer (Encoder): DNE
+Baseline (1): Acc: 73%, Loss: ~0.59, Time: 37s
+CNN (2): DNE
+RNN (3): DNE
+LSTM (4): DNE
+Transformer (Encoder, 5): Acc: 85%, Loss: ~0.35, Time: 468seconds / 7.8 minutes
 
 Extra info:
-Complex CNN (Premade in Test 2): DNE
+Complex CNN (Premade in Test 2, 6): DNE
