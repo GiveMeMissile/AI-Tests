@@ -12,7 +12,7 @@ from pandas import DataFrame
 # 5 will be the default epoch value across all tests
 EPOCH = 5
 BATCH_SIZE = 32
-MAX_LENGTH = 512
+MAX_LENGTH = 64
 INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 2
@@ -168,6 +168,7 @@ def main():
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
+    print("\nStarting training process...")
 
     for epoch in range(epochs):
         train_loss, train_accuracy, train_time = train(train_dataloader, model, loss_fn, optimizer)
