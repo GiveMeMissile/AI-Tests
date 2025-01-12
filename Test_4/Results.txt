@@ -1,8 +1,8 @@
 Baseline (1): Acc: 73%, Loss: ~0.59, Time: 37s
-CNN (2): DNE
+CNN (2): Acc: 74%, Loss: ~.59, Time: 105s
 RNN (3): DNE
 LSTM (4): DNE
-Transformer (Encoder, 5): Acc: 85%, Loss: ~0.35, Time: 468seconds / 7.8 minutes
+Transformer (Encoder, 5): Acc: 85%, Loss: ~0.35, Time: 468s / 7.8 minutes
 
 Extra info:
 Complex CNN (Premade in Test 2, 6): DNE
