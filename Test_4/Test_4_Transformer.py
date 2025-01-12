@@ -14,7 +14,7 @@ import math
 TOKENIZER = AutoTokenizer.from_pretrained("bert-base-uncased")
 EPOCH = 5
 BATCH_SIZE = 32
-MAX_LENGTH = 512
+MAX_LENGTH = 64
 INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 2
@@ -100,13 +100,17 @@ class TransformerModel(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer=encoder, num_layers=num_layers)
         self.output_layer = nn.Linear(hidden_features, output)
 
-    def forward(self, x):
+    def forward(self, x, attention_mask=None):
         x = self.embedding(x.long()) * math.sqrt(self.hidden_features)
         x = self.positional_encoder(x)
 
         x = x.permute(1, 0, 2)
 
-        x = self.transformer(x)
+        if attention_mask is not None:
+            attention_mask = attention_mask.permute(1, 0)
+            attention_mask = attention_mask.to(dtype=torch.bool)
+
+        x = self.transformer(x, src_key_padding_mask=attention_mask)
 
         x = self.output_layer(x.mean(0))
         return x
@@ -128,7 +132,10 @@ def train(dataloader, model, loss_fn, optimizer):
     for batch, data in enumerate(dataloader):
         X = data["input_ids"].type(torch.long)
         y = data["label"].type(torch.float)
-        y_logits = model.forward(X)
+
+        attention_mask = None
+
+        y_logits = model.forward(X, attention_mask=attention_mask)
         loss = loss_fn(y_logits.squeeze(dim=1), y)
         train_loss += loss
         optimizer.zero_grad()
@@ -152,7 +159,10 @@ def test(dataloader, model, loss_fn):
         for batch, data in enumerate(dataloader):
             X = data["input_ids"].type(torch.long)
             y = data["label"].type(torch.float)
-            y_logits = model.forward(X)
+            
+            attention_mask = None
+
+            y_logits = model.forward(X, attention_mask=attention_mask)
             loss = loss_fn(y_logits.squeeze(dim=1), y)
             test_loss += loss
             accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y)
@@ -200,10 +210,11 @@ def main():
     )
 
     loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.00001)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.00005)
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
+    print("Starting the training process...")
 
     for epoch in range(epochs):
         train_loss, train_accuracy, train_time = train(train_dataloader, model, loss_fn, optimizer)
