@@ -11,14 +11,16 @@ import math
 
 
 # 5 will be the default epoch value across all tests
+TOKENIZER = AutoTokenizer.from_pretrained("bert-base-uncased")
 EPOCH = 5
 BATCH_SIZE = 32
-MAX_LENGTH = 256
+MAX_LENGTH = 512
 INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 2
 HIDDEN_FEATURES = 64
-NUM_TOKENS = 30522
+DATASET = "thePixel42/depression-detection"
+NUM_TOKENS = len(TOKENIZER)
 
 
 def user_login():
@@ -36,14 +38,13 @@ def user_login():
 
 def get_data():
     print("Processing data...")
-    train_dataset = load_dataset("ziq/depression_tweet", split="train")
-    test_dataset = load_dataset("ziq/depression_tweet", split="test")
+    train_dataset = load_dataset(DATASET, split="train")
+    test_dataset = load_dataset(DATASET, split="test")
     # Using bert-base-uncased for tokenizing the dataset
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
     # This is based off of code from huggingface because I don't fully know how to tokenize stuff... yay
     def tokenize(example):
-        return tokenizer(example["text"], padding="max_length", truncation=True, max_length=MAX_LENGTH)
+        return TOKENIZER(example["text"], padding="max_length", truncation=True, max_length=MAX_LENGTH)
 
     tokenized_train_dataset = train_dataset.map(tokenize, batched=True, batch_size=BATCH_SIZE)
     tokenized_test_dataset = test_dataset.map(tokenize, batched=True, batch_size=BATCH_SIZE)
@@ -89,19 +90,25 @@ class TransformerModel(nn.Module):
         self.positional_encoder = PositionalEncoding(hidden_features, dropout, max_length=MAX_LENGTH)
 
         self.embedding = nn.Embedding(num_tokens, hidden_features)
-        encoder = nn.TransformerEncoderLayer(d_model=hidden_features, nhead=num_heads, batch_first=True)
+        encoder = nn.TransformerEncoderLayer(
+            d_model=hidden_features,
+            nhead=num_heads,
+            dim_feedforward=HIDDEN_FEATURES,
+            dropout=dropout,
+            batch_first=True
+        )
         self.transformer = nn.TransformerEncoder(encoder_layer=encoder, num_layers=num_layers)
         self.output_layer = nn.Linear(hidden_features, output)
 
     def forward(self, x):
-        x = self.embedding(x) * math.sqrt(self.hidden_features)
+        x = self.embedding(x.long()) * math.sqrt(self.hidden_features)
         x = self.positional_encoder(x)
 
         x = x.permute(1, 0, 2)
 
         x = self.transformer(x)
 
-        x = self.output_layer(x)
+        x = self.output_layer(x.mean(0))
         return x
 
 
@@ -122,13 +129,12 @@ def train(dataloader, model, loss_fn, optimizer):
         X = data["input_ids"].type(torch.long)
         y = data["label"].type(torch.float)
         y_logits = model.forward(X)
-        y_logits = y_logits[0, :, 0]
-        loss = loss_fn(y_logits, y)
+        loss = loss_fn(y_logits.squeeze(dim=1), y)
         train_loss += loss
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        accuracy = calculate_accuracy(y_logits, y)
+        accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y)
         train_accuracy += accuracy
     train_loss = train_loss/len(dataloader)
     train_accuracy = train_accuracy/len(dataloader)
@@ -147,10 +153,9 @@ def test(dataloader, model, loss_fn):
             X = data["input_ids"].type(torch.long)
             y = data["label"].type(torch.float)
             y_logits = model.forward(X)
-            y_logits = y_logits[0, :, 0]
-            loss = loss_fn(y_logits, y)
+            loss = loss_fn(y_logits.squeeze(dim=1), y)
             test_loss += loss
-            accuracy = calculate_accuracy(y_logits, y)
+            accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y)
             test_accuracy += accuracy
         test_loss = test_loss/len(dataloader)
         test_accuracy = test_accuracy/len(dataloader)
@@ -188,14 +193,14 @@ def main():
     model = TransformerModel(
         num_tokens=NUM_TOKENS,
         hidden_features=HIDDEN_FEATURES,
-        num_heads=2,
+        num_heads=8,
         num_layers=HIDDEN_LAYERS,
         dropout=.2,
         output=OUTPUT_FEATURES
     )
 
     loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.SGD(params=model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.00001)
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
@@ -203,7 +208,7 @@ def main():
     for epoch in range(epochs):
         train_loss, train_accuracy, train_time = train(train_dataloader, model, loss_fn, optimizer)
         test_loss, test_accuracy, test_time = test(test_dataloader, model, loss_fn)
-        print(f"Epoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
+        print(f"\nEpoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
               f"Train time: {train_time:.2f}\nTest loss: {test_loss:.4f}, Test accuracy: {test_accuracy:.3f}% | "
               f"Test time: {test_time:.2f}")
         results["Epoch"].append(epoch+1)
