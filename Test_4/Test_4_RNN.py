@@ -11,13 +11,15 @@ from pandas import DataFrame
 
 # 5 will be the default epoch value across all tests
 EPOCH = 5
+TOKENIZER = AutoTokenizer.from_pretrained("bert-base-uncased")
 BATCH_SIZE = 32
-MAX_LENGTH = 256
+MAX_LENGTH = 64
 INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
-HIDDEN_LAYERS = 1
 RNN_LAYERS = 2
 HIDDEN_FEATURES = 64
+DATASET = "thePixel42/depression-detection"
+NUM_TOKENS = len(TOKENIZER)
 
 
 def user_login():
@@ -35,14 +37,13 @@ def user_login():
 
 def get_data():
     print("Processing data...")
-    train_dataset = load_dataset("ziq/depression_tweet", split="train")
-    test_dataset = load_dataset("ziq/depression_tweet", split="test")
+    train_dataset = load_dataset(DATASET, split="train")
+    test_dataset = load_dataset(DATASET, split="test")
     # Using bert-base-uncased for tokenizing the dataset
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
     # This is based off of code from huggingface because I don't fully know how to tokenize stuff... yay
     def tokenize(example):
-        return tokenizer(example["text"], padding="max_length", truncation=True, max_length=MAX_LENGTH)
+        return TOKENIZER(example["text"], padding="max_length", truncation=True, max_length=MAX_LENGTH)
 
     tokenized_train_dataset = train_dataset.map(tokenize, batched=True, batch_size=BATCH_SIZE)
     tokenized_test_dataset = test_dataset.map(tokenize, batched=True, batch_size=BATCH_SIZE)
@@ -66,6 +67,7 @@ class ClassificationRNN(nn.Module):
         super(ClassificationRNN, self).__init__()
         self.hidden_features = hidden_features
         self.rnn_layers = rnn_layers
+        self.embed_layer = nn.Embedding(NUM_TOKENS, input_features)
         self.input_RNN_layer = nn.RNN(input_size=input_features,
                                       hidden_size=hidden_features,
                                       num_layers=rnn_layers,
@@ -74,13 +76,11 @@ class ClassificationRNN(nn.Module):
         self.output_layer = nn.Linear(in_features=hidden_features, out_features=output_features)
 
     def forward(self, x):
-        # h_0 = torch.zeros(self.rnn_layers, x.size(0), self.hidden_features)
-        # For some reason using the code above with text classification makes the model worse.
-        # The accuracy stays at around 56%.
-        # This is most likely due to my own error and a better programmer most likely would be able to use h_0 without this lack of accuracy.
-        # Or rnns are not made for this type of classification with the lack of sequencing in the dataset.
-        
-        x, _ = self.input_RNN_layer(x)
+        x = self.embed_layer(x)
+        h0 = torch.zeros(self.rnn_layers, x.size(0), self.hidden_features)
+
+        x, _ = self.input_RNN_layer(x, h0)
+        x = x[:, -1, :]
         x = self.output_layer(x)
         return x
 
@@ -88,10 +88,8 @@ class ClassificationRNN(nn.Module):
 def calculate_accuracy(y_logits, y):
     y_pred = torch.sigmoid(y_logits)
     y_pred = (y_pred > .5).int()
-    # print(y_pred == y)
     accuracy = (y_pred == y).sum().item()
     accuracy = accuracy/y.size(0)
-    # print(accuracy)
     return accuracy * 100
 
 
@@ -101,7 +99,7 @@ def train(dataloader, model, loss_fn, optimizer):
     train_accuracy = 0
     model.train()
     for batch, data in enumerate(dataloader):
-        X = data["input_ids"].type(torch.float32)
+        X = data["input_ids"].type(torch.int)
         y = data["label"].type(torch.float32)
         y_logits = model.forward(X).squeeze(dim=1)
         loss = loss_fn(y_logits, y)
@@ -125,7 +123,7 @@ def test(dataloader, model, loss_fn):
     model.eval()
     with torch.inference_mode():
         for batch, data in enumerate(dataloader):
-            X = data["input_ids"].type(torch.float32)
+            X = data["input_ids"].type(torch.int)
             y = data["label"].type(torch.float32)
             y_logits = model.forward(X).squeeze(dim=1)
             loss = loss_fn(y_logits, y)
@@ -169,16 +167,16 @@ def main():
                               hidden_features=HIDDEN_FEATURES, rnn_layers=RNN_LAYERS)
 
     loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.SGD(params=model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
-    print("Starting training process.")
+    print("\nStarting training process...")
 
     for epoch in range(epochs):
         train_loss, train_accuracy, train_time = train(train_dataloader, model, loss_fn, optimizer)
         test_loss, test_accuracy, test_time = test(test_dataloader, model, loss_fn)
-        print(f"Epoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
+        print(f"\nEpoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
               f"Train time: {train_time:.2f}\nTest loss: {test_loss:.4f}, Test accuracy: {test_accuracy:.3f}% | "
               f"Test time: {test_time:.2f}")
         results["Epoch"].append(epoch+1)
@@ -194,4 +192,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-   main()
