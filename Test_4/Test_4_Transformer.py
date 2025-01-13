@@ -210,7 +210,7 @@ def main():
     )
 
     loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.00005)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
