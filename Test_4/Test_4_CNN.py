@@ -90,7 +90,6 @@ class ClassifierCNN(nn.Module):
 def calculate_accuracy(y_logits, y):
     y_pred = torch.sigmoid(y_logits)
     y_pred = (y_pred > .5).int()
-    # print(y_pred == y)
     accuracy = (y_pred == y).sum().item()
     accuracy = accuracy/y.size(0)
     return accuracy * 100
@@ -174,7 +173,7 @@ def main():
                           hidden_features=HIDDEN_FEATURES)
 
     loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.SGD(params=model.parameters(), lr=0.0001)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
@@ -184,7 +183,7 @@ def main():
     for epoch in range(epochs):
         train_loss, train_accuracy, train_time = train(train_dataloader, model, loss_fn, optimizer)
         test_loss, test_accuracy, test_time = test(test_dataloader, model, loss_fn)
-        print(f"Epoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
+        print(f"\nEpoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
               f"Train time: {train_time:.2f}\nTest loss: {test_loss:.4f}, Test accuracy: {test_accuracy:.3f}% | "
               f"Test time: {test_time:.2f}")
         results["Epoch"].append(epoch+1)
