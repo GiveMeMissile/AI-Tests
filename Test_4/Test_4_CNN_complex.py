@@ -13,12 +13,13 @@ from math import sqrt
 # 5 will be the default epoch value across all tests
 EPOCH = 5
 BATCH_SIZE = 32
-MAX_LENGTH = 256
+MAX_LENGTH = 64
 LENGTH = int(sqrt(MAX_LENGTH))
 INPUT_FEATURES = 1  # One channel for text
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 2
 HIDDEN_FEATURES = 64
+DATASET = "thePixel42/depression-detection"
 
 
 def user_login():
@@ -36,8 +37,8 @@ def user_login():
 
 def get_data():
     print("Processing data...")
-    train_dataset = load_dataset("ziq/depression_tweet", split="train")
-    test_dataset = load_dataset("ziq/depression_tweet", split="test")
+    train_dataset = load_dataset(DATASET, split="train")
+    test_dataset = load_dataset(DATASET, split="test")
     # Using bert-base-uncased for tokenizing the dataset
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
@@ -86,10 +87,13 @@ class AdaptiveCNNModel(nn.Module):
         )
         self.num_hidden_layers = num_hidden_layers
 
-    def forward(self, xe):
+    def forward(self, x, show_hidden=False):
         x = self.input_layer(x)
         for i in range(self.num_hidden_layers):
             x = self.hidden_layer(x)
+            if show_hidden:
+                print(f"Hidden layer {i+1}")
+                print(x.shape)
         x = self.output_layer(x)
         return x
 
@@ -181,17 +185,17 @@ def main():
                              num_hidden_layers=HIDDEN_LAYERS, hidden_features=HIDDEN_FEATURES)
 
     loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.SGD(params=model.parameters(), lr=0.0001)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
 
-    print("Starting training process.")
+    print("\nStarting training process...")
 
     for epoch in range(epochs):
         train_loss, train_accuracy, train_time = train(train_dataloader, model, loss_fn, optimizer)
         test_loss, test_accuracy, test_time = test(test_dataloader, model, loss_fn)
-        print(f"Epoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
+        print(f"\nEpoch: {epoch+1}\nTrain loss: {train_loss:.4f} | Train accuracy: {train_accuracy:.3f}% | "
               f"Train time: {train_time:.2f}\nTest loss: {test_loss:.4f}, Test accuracy: {test_accuracy:.3f}% | "
               f"Test time: {test_time:.2f}")
         results["Epoch"].append(epoch+1)
