@@ -115,8 +115,8 @@ def train(dataloader, model, loss_fn, optimizer, h0, c0):
         accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y)
         train_accuracy += accuracy
 
-        h0 = h0.detach()
-        c0 = c0.detach()
+        h0 = h0.clone().detach()
+        c0 = c0.clone().detach()
 
     train_loss = train_loss/len(dataloader)
     train_accuracy = train_accuracy/len(dataloader)
@@ -130,7 +130,9 @@ def test(dataloader, model, loss_fn, h0, c0):
     test_loss = 0
     test_accuracy = 0
     model.eval()
-    with torch.inference_mode():
+    
+    # Using no_grad because torch.inference mode does not work for some reason... IDK why
+    with torch.no_grad():
         for batch, data in enumerate(dataloader):
             X = data["input_ids"].type(torch.int)
             y = data["label"].type(torch.float32)
@@ -140,8 +142,8 @@ def test(dataloader, model, loss_fn, h0, c0):
             accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y)
             test_accuracy += accuracy
 
-            h0 = h0.detach()
-            c0 = c0.detach()
+            h0 = h0.clone().detach()
+            c0 = c0.clone().detach()
 
         test_loss = test_loss/len(dataloader)
         test_accuracy = test_accuracy/len(dataloader)
@@ -180,7 +182,7 @@ def main():
                               hidden_features=HIDDEN_FEATURES, lstm_layers=LSTM_LAYERS, num_tokens=NUM_TOKENS)
 
     loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.SGD(params=model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
     epochs = EPOCH
     results = {"Epoch": [], "Train loss": [], "Train accuracy": [], "Train time": [], "Test loss": [],
                "Test Accuracy": [], "Test time": []}
