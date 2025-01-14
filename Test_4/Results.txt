@@ -1,7 +1,7 @@
 Baseline (1): Acc: 75%, Loss: ~0.55, Time: 39s
 CNN (2): Acc: 75%, Loss: ~0.56, Time: 105s
 RNN (3): Acc: 85%, Loss: ~0.38, Time: 277s / 4.6 minutes
-LSTM (4): DNE
+LSTM (4): Acc: 92%, loss: ~0.21, Time: 287s / 4.8 minutes.
 Transformer (Encoder, 5): Acc: 88%, Loss: ~0.29, Time: 468s / 7.8 minutes
 
 Extra info:
