@@ -5,4 +5,4 @@ LSTM (4): Acc: 92%, loss: ~0.21, Time: 287s / 4.8 minutes.
 Transformer (Encoder, 5): Acc: 88%, Loss: ~0.29, Time: 468s / 7.8 minutes
 
 Extra info:
-Complex CNN (Premade in Test 2, 6): DNE
+Complex CNN (Premade in Test 2, 6): Acc: 76%, loss: ~0.53, Time: 280s / 4.7 minutes
