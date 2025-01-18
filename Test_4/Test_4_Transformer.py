@@ -21,6 +21,8 @@ HIDDEN_LAYERS = 2
 HIDDEN_FEATURES = 64
 DATASET = "thePixel42/depression-detection"
 NUM_TOKENS = len(TOKENIZER)
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+print(DEVICE)
 
 
 def user_login():
@@ -101,6 +103,7 @@ class TransformerModel(nn.Module):
         self.output_layer = nn.Linear(hidden_features, output)
 
     def forward(self, x, attention_mask=None):
+        x = x.to(DEVICE)
         x = self.embedding(x.long()) * math.sqrt(self.hidden_features)
         x = self.positional_encoder(x)
 
@@ -113,6 +116,7 @@ class TransformerModel(nn.Module):
         x = self.transformer(x, src_key_padding_mask=attention_mask)
 
         x = self.output_layer(x.mean(0))
+        x = x.to("cpu")
         return x
 
 
@@ -198,7 +202,7 @@ def create_and_display_dataframe(dictionary):
 
 
 def main():
-    # user_login()
+    user_login()
     train_dataloader, test_dataloader = get_data()
     model = TransformerModel(
         num_tokens=NUM_TOKENS,
@@ -208,6 +212,7 @@ def main():
         dropout=.2,
         output=OUTPUT_FEATURES
     )
+    model = model.to(DEVICE)
 
     loss_fn = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001)
