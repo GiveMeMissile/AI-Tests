@@ -4,7 +4,6 @@
 import torch
 from torch import nn
 from datasets import load_dataset
-from torch.utils.data import DataLoader
 from huggingface_hub import login
 from transformers import AutoTokenizer
 import time
@@ -16,9 +15,9 @@ from random import shuffle
 
 # Using the best base uncase for tokenization. 
 TOKENIZER = AutoTokenizer.from_pretrained("bert-base-uncased")
-EPOCH = 5
+EPOCH = 25
 BATCH_SIZE = 64
-MAX_LENGTH = 64  # The maxiumum number of tokens that a text can have. Not too much actually.
+MAX_LENGTH = 256  # The maxiumum number of tokens that a text can have. Not too much actually.
 INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 6  # The default number of transformer layers.
@@ -41,7 +40,7 @@ def set_data_device(device, X, y):
     # Sets the data's device and datatype
 
     X = X.to(device).type(torch.long)
-    y = y.to(device)
+    y = y.to(device).type(torch.float)
     return X, y
 
 
@@ -156,9 +155,10 @@ class DatasetManager:
         for test_dataset in self.tokenized_dataset_test:
             test_X += test_dataset["input_ids"]  # input
             try:
-                train_y += train_dataset["label"]  # output
+                test_y += test_dataset["label"]  # output
             except Exception:
-                train_y += train_dataset["is_depression"]  # also output
+                test_y += test_dataset["is_depression"]  # also output
+
 
         train_dataset = {"X": train_X, "y": train_y}
         test_dataset = {"X": test_X, "y": test_y}
@@ -185,21 +185,20 @@ class DatasetManager:
     def batch_data(self, dataset=None):
         # This function batches the data in order to train a neural network.
 
-        dataset = self.tensorize_category(dataset)
         batch = 1
-        X = []
-        y = []
+        X_batch = []
+        y_batch = []
         X_list = []
         y_list = []
-        for i, (image, category) in enumerate(zip(dataset["X"], dataset["y"])):
-            X.append(image)
-            y.append(category)
+        for i, (text, category) in enumerate(zip(dataset["X"], dataset["y"])):
+            X_batch.append(text)
+            y_batch.append(category)
             if i+1 == BATCH_SIZE*batch or len(dataset["X"]) == i+1:
                 batch += 1
-                X = torch.stack(X, dim=0)
-                y = torch.stack(y, dim=0)
-                X.clear()
-                y.clear()
+                X = torch.stack(X_batch, dim=0)
+                y = torch.stack(y_batch, dim=0)
+                X_batch.clear()
+                y_batch.clear()
                 X_list.append(X)
                 y_list.append(y)
         dataset = {"X": X_list, "y": y_list}
@@ -213,8 +212,8 @@ class DatasetManager:
         print("Preparing data...")
         self.tokenize_all_saved_datasets()
         self.merge_tokenized_datasets()
-        self.apply_shuffle
-        self.apply_batch
+        self.apply_shuffle()
+        self.apply_batch()
         print("Data sucessfully prepared")
         return self.train_dict, self.test_dict
 
@@ -257,18 +256,22 @@ class TransformerModel(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer=encoder, num_layers=num_layers)
         self.output_layer = nn.Linear(hidden_features, output)
 
-    def forward(self, x, attention_mask=None):
+    def forward(self, x, padding_attention_mask=None):
         x = x.to(DEVICE)
         x = self.embedding(x.long()) * math.sqrt(self.hidden_features)
         x = self.positional_encoder(x)
 
         x = x.permute(1, 0, 2)
 
-        if attention_mask is not None:
-            attention_mask = attention_mask.permute(1, 0)
-            attention_mask = attention_mask.to(dtype=torch.bool)
-
-        x = self.transformer(x, src_key_padding_mask=attention_mask)
+        try:
+            x = self.transformer(x, src_key_padding_mask=padding_attention_mask)
+        except Exception as e:
+            print(f"attention mask: {padding_attention_mask}")
+            print(f"x: {x}")
+            print("shape of x: ", x.shape)
+            # print(f"shape of padding_attention_mask: {padding_attention_mask.shape}")
+            raise e
+        x = self.transformer(x, src_key_padding_mask=padding_attention_mask)
 
         x = self.output_layer(x.mean(0))
         return x
@@ -282,6 +285,16 @@ def calculate_accuracy(y_logits, y):
     return accuracy * 100
 
 
+def create_attention_mask(X):
+    # This function creates an attention mask for the transformer model.
+    # This mask is used to mask padding tokens (0s) in the input.
+
+    attention_mask = (X != 0)
+    attention_mask = attention_mask.to(DEVICE)
+    attention_mask = attention_mask.permute(1, 0)
+    return attention_mask
+
+
 def train(dataloader, model, loss_fn, optimizer):
     start = time.time()
     train_loss = 0
@@ -290,9 +303,9 @@ def train(dataloader, model, loss_fn, optimizer):
     for batch, (X, y) in enumerate(zip(dataloader["X"], dataloader["y"])):
         X, y = set_data_device(DEVICE, X, y)
 
-        attention_mask = None
+        attention_mask = create_attention_mask(X)
 
-        y_logits = model.forward(X, attention_mask=attention_mask)
+        y_logits = model.forward(X, padding_attention_mask=attention_mask)
         loss = loss_fn(y_logits.squeeze(dim=1), y)
         train_loss += loss
         optimizer.zero_grad()
@@ -300,8 +313,8 @@ def train(dataloader, model, loss_fn, optimizer):
         optimizer.step()
         accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y)
         train_accuracy += accuracy
-    train_loss = train_loss/len(dataloader)
-    train_accuracy = train_accuracy/len(dataloader)
+    train_loss = train_loss/len(dataloader["X"])
+    train_accuracy = train_accuracy/len(dataloader["X"])
     end = time.time()
     train_time = end-start
     return train_loss, train_accuracy, train_time
@@ -312,19 +325,22 @@ def test(dataloader, model, loss_fn):
     test_loss = 0
     test_accuracy = 0
     model.eval()
-    with torch.inference_mode():
+
+    with torch.no_grad():
         for batch, (X, y) in enumerate(zip(dataloader["X"], dataloader["y"])):
             X, y = set_data_device(DEVICE, X, y)
 
-            attention_mask = None
+            attention_mask = None # create_attention_mask(X)
 
-            y_logits = model.forward(X, attention_mask=attention_mask)
+            y_logits = model.forward(X, padding_attention_mask=attention_mask)
             loss = loss_fn(y_logits.squeeze(dim=1), y)
+            # print(f"loss: {loss}")
+            # print(f"y_logits: {y_logits}")
             test_loss += loss
             accuracy = calculate_accuracy(y_logits.squeeze(dim=1), y)
             test_accuracy += accuracy
-        test_loss = test_loss/len(dataloader)
-        test_accuracy = test_accuracy/len(dataloader)
+        test_loss = test_loss/len(dataloader["X"])
+        test_accuracy = test_accuracy/len(dataloader["X"])
         end = time.time()
         test_time = end-start
         return test_loss, test_accuracy, test_time
@@ -338,10 +354,10 @@ def save_model(model):
     print("Saving model...")
     model_path = Path("Depression_detecting_models")
     model_path.mkdir(parents=True, exist_ok=True)
-    model_name = "test_model.pth"
+    model_name = "Model_001.pth"
     model_save_path = model_path/model_name
     torch.save(model, model_save_path)
-    model_state_dict_name = "test_models_state_dict.pth"
+    model_state_dict_name = "Model_001_state_dict.pth"
     dict_path = model_path/model_state_dict_name
     torch.save(model.state_dict, dict_path)
     print("Model has been saved!")
@@ -396,6 +412,7 @@ def main():
         results["Test time"].append(round(test_time, 2))
     create_and_display_dataframe(results)
     save_model(model)
+
 
 
 if __name__ == "__main__":
