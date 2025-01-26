@@ -17,7 +17,7 @@ from random import shuffle
 TOKENIZER = AutoTokenizer.from_pretrained("bert-base-uncased")
 EPOCH = 25
 BATCH_SIZE = 64
-MAX_LENGTH = 256  # The maxiumum number of tokens that a text can have. Not too much actually.
+MAX_LENGTH = 128  # The maxiumum number of tokens that a text can have. Not too much actually.
 INPUT_FEATURES = MAX_LENGTH
 OUTPUT_FEATURES = 1
 HIDDEN_LAYERS = 6  # The default number of transformer layers.
@@ -289,7 +289,7 @@ def create_attention_mask(X):
     # This function creates an attention mask for the transformer model.
     # This mask is used to mask padding tokens (0s) in the input.
 
-    attention_mask = (X != 0)
+    attention_mask = (X == 0)
     attention_mask = attention_mask.to(DEVICE)
     attention_mask = attention_mask.permute(1, 0)
     return attention_mask
@@ -330,7 +330,7 @@ def test(dataloader, model, loss_fn):
         for batch, (X, y) in enumerate(zip(dataloader["X"], dataloader["y"])):
             X, y = set_data_device(DEVICE, X, y)
 
-            attention_mask = None # create_attention_mask(X)
+            attention_mask = create_attention_mask(X)
 
             y_logits = model.forward(X, padding_attention_mask=attention_mask)
             loss = loss_fn(y_logits.squeeze(dim=1), y)
@@ -385,7 +385,7 @@ def main():
         hidden_features=HIDDEN_FEATURES,
         num_heads=8,
         num_layers=HIDDEN_LAYERS,
-        dropout=.2,
+        dropout=.4,
         output=OUTPUT_FEATURES
     )
     model = model.to(DEVICE)
@@ -412,6 +412,11 @@ def main():
         results["Test time"].append(round(test_time, 2))
     create_and_display_dataframe(results)
     save_model(model)
+
+
+
+if __name__ == "__main__":
+    main()
 
 
 
