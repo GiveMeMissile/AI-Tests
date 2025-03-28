@@ -1,12 +1,18 @@
+# What am I doing with my life ( – ⌓ – )
+
 import torch
 import torch.nn as nn
 import random
 import time
-import math
 
-device = 'cuda' if torch.cuda.is_available else 'cpu'
+device = 'cuda' if torch.cuda.is_available else 'cpu'  # Device agnostic code. A classic.
+EPOCHS = 100
+BATCH_SIZE = 128
+PATH = "Models/complex_model_001.pth"
 
 def create_complex_tensors(number_of_values, batch):
+    # The FUN PART. Creating a dataset of complex numbers! 
+
     func = lambda z : (4.3301 + 2.5j)*z + (5 + 10j)
     data = {"X": [], "y": []}
 
@@ -14,7 +20,7 @@ def create_complex_tensors(number_of_values, batch):
         x_batch = []
         y_batch = []
         for _ in range(batch):
-            x = random.randint(1, 100) + random.randint(1, 100)*1j
+            x = random.randint(1, 100) + random.randint(1, 100)*1j  # Why is the imaginary number in python 'j'. 'i' IS RIGHT THERE!!!
             x_batch.append(torch.tensor(x, dtype=torch.complex64))
             y = func(x)
             y_batch.append(torch.tensor(y, dtype = torch.complex64))
@@ -22,10 +28,15 @@ def create_complex_tensors(number_of_values, batch):
         y = torch.stack(y_batch, dim=0).unsqueeze(1)
         data["X"].append(x)
         data["y"].append(y)
+
+    # Returns a dictionary with inputs "X" and outputs "y".
+
     return data 
 
 
 class BasicNN(nn.Module):
+    # Simple neural network. SIMPLE!!!
+
     def __init__(self):
         super(BasicNN, self).__init__()
         self.fc1 = nn.Linear(1, 64, dtype=torch.complex64)
@@ -38,13 +49,15 @@ class BasicNN(nn.Module):
 
 
 def calculate_accuracy(y_pred, y):
-    # real_correct = (y_pred.real / y.real if y.real > y_pred.real else y.real / y_pred.real).sum().item()/y.size(0)
-    # imag_correct = (y_pred.imag / y.imag if y.imag > y_pred.imag else y.imag / y_pred.imag).sum().item()/y.size(0)
+    # Calculating the accuracy with cool maths.
+
     real_correct = 0
     imag_correct = 0
     for i in range(y.size(0)):
-        real_correct += 100 - (abs((y_pred[i].real.item()-y[i].real.item())/y[i].real.item())*100)
-        imag_correct += 100 - (abs((y_pred[i].imag.item()-y[i].imag.item())/y[i].imag.item())*100)
+        r = 100 - abs(abs(y_pred[i].real.item()-y[i].real.item())/((y[i].real.item()+y_pred[i].real.item())/2)*100)  # PEAK MATH EQUATION!!!
+        im = 100 - abs(abs(y_pred[i].imag.item()-y[i].imag.item())/((y[i].imag.item()+y_pred[i].imag.item())/2)*100)  # Seriously this is a peak math equaton
+        real_correct += r
+        imag_correct += im
     real_correct = real_correct/y.size(0)
     imag_correct = imag_correct/y.size(0)
     return (real_correct + imag_correct)/2
@@ -90,12 +103,17 @@ def test(loss_fn, model, data):
         test_accuracy = test_accuracy/len(data["X"])
         return test_loss, test_accuracy, end-start
 
+def save_model(model, path):
+    # Save the model to a file.
+    print("Saving model...")
+    torch.save(model.state_dict(), path)
+    print("Model saved.")
 
 
 def main():
-    train_data = create_complex_tensors(10*(32**2), 128)
-    test_data = create_complex_tensors(10*(32**2), 128)
-    epochs = 100
+    train_data = create_complex_tensors(10*(32**2), BATCH_SIZE)
+    test_data = create_complex_tensors((32**2), BATCH_SIZE)
+    epochs = EPOCHS
 
     model = BasicNN().to(device)
     loss_fn = nn.L1Loss()
@@ -106,8 +124,12 @@ def main():
         test_loss, test_accuracy, test_time = test(loss_fn, model, test_data)
         print(f"Epoch: {epoch+1} \nTrain Loss: {train_loss:.4f} | Train Accuracy: {train_accuracy:.3f}% | Train Time: {train_time:.3f}" 
               f"\nTest Loss: {test_loss:.4f} | Test Accuracy: {test_accuracy:.3f}% | Test Time: {test_time:.3f}")
-        train_data = create_complex_tensors(10*(32**2), 128)
-        test_data = create_complex_tensors((32**2), 128)
+        
+        # Recreate the data every epoch because I can.
+        train_data = create_complex_tensors(10*(32**2), BATCH_SIZE)
+        test_data = create_complex_tensors((32**2), BATCH_SIZE)
+
+    save_model(model, PATH)
 
 if __name__ == "__main__":
     main()
