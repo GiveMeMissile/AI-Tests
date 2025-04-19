@@ -8,6 +8,7 @@ WINDOW_X, WINDOW_Y = 1500, 750
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 YELLOW = (255, 255, 0)
+RED = (255, 0, 0)
 
 GLUE_DIM = 75
 GLUES = 5
@@ -77,19 +78,23 @@ class Glue(Object):
             if self.hitbox.colliderect(obj.hitbox):
                 obj.dx = obj.dx/2
                 obj.dy = obj.dy/2
+                if not isinstance(obj, Player) and not isinstance(obj, AI):
+                    continue
+                obj.in_glue = True
                 if not isinstance(obj, Player):
                     continue
-
                 # Damages the player for colliding with glue.
                 if current_time - self.timer >= DAMAGE_COOLDOWN:
                     obj.health -= 1
                     self.timer = current_time
+
 
                           
 class Player(Object):
     def __init__(self, x, y, width, height, window, color):
         super().__init__(x, y, width, height, window, color)
         self.health = 10
+        self.in_glue = False
 
     def player_move(self):
         # Player movement using WASD keys. The player can move in all directions and has a maximum velocity.
@@ -137,15 +142,85 @@ class AI(Object):
         super().__init__(x, y, width, height, window, color)
         self.model = model
         self.player = player
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.00001)
+        self.in_glue = False
 
     def calculate_loss(self):
-        pass
+        loss_x = abs(self.player.hitbox.x - self.hitbox.x)/WINDOW_X
+        loss_y = abs(self.player.hitbox.y - self.hitbox.y)/WINDOW_Y
+        loss = (loss_x + loss_y)/2
+        if self.in_glue:
+            loss *= 2
+        if self.player.in_glue:
+            loss /= 2
+        return loss
 
-    def ai_move(self):
-        pass
+    def ai_move(self, glues):
+        # Prepare the input tensors to be fed into the neural network.
+        X = torch.tensor([
+            self.hitbox.x, 
+            self.hitbox.y, 
+            self.dx, 
+            self.dy, 
+            self.player.hitbox.x, 
+            self.player.hitbox.y
+            ], dtype=torch.float32).to(device)
+        list_glues_location = []
+        for glue in glues:
+            list_glues_location.append(glue.hitbox.x)
+            list_glues_location.append(glue.hitbox.y)
+        glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
+        X = torch.cat((X, glue_tensor), dim=0)
+        X = X.to(device)
 
-    def train_ai(self):
-        pass
+        # Feed the input tensor into the neural network and get the output tensor then process the data to get the direction of the AI's acceleration.
+        # output is as a vector containung 4 values that are from 0-1. With each value representing a direction: [up, down, left, right].
+        original_output = self.model(X)
+        output = torch.sigmoid(original_output).to("cpu")
+        output = (output > 0.5)
+        print(output)
+        if (output[0]):
+            self.dy -= ACCELERATION
+        if (output[1]):
+            self.dy += ACCELERATION
+        if (output[2]):
+            self.dx -= ACCELERATION
+        if (output[3]):
+            self.dx += ACCELERATION
+
+        # Applying fiction to the AI's velocity.
+        if (self.dx > 0):
+            self.dx -= FRICTION
+        elif (self.dx < 0):
+            self.dx += FRICTION
+        if (self.dy > 0):
+            self.dy -= FRICTION
+        elif (self.dy < 0):
+            self.dy += FRICTION
+
+        # Cheing for max velocity and setting the velocity to the max velocity if it is greater than the max velocity.
+        if self.dx > MAX_VELOCITY:
+            self.dx = MAX_VELOCITY
+        elif self.dx < -MAX_VELOCITY:
+            self.dx = -MAX_VELOCITY
+        if self.dy > MAX_VELOCITY:
+            self.dy = MAX_VELOCITY
+        elif self.dy < -MAX_VELOCITY:
+            self.dy = -MAX_VELOCITY
+        
+        self.move()
+        self.check_bounds()
+        self.train_ai(original_output)
+            
+
+    def train_ai(self, output):
+        # Trains the AI using the custom loss function. The loss function is based on the distance between the AI and the player.
+        # The loss function is used to update the weights of the neural network.
+
+        self.optimizer.zero_grad()
+        loss = self.model.calculate_loss(self.player, self.hitbox, self.in_glue, output)
+        loss.backward()
+        self.optimizer.step()
 
 
 class SimpleNeuralNetwork(nn.Module):
@@ -154,16 +229,35 @@ class SimpleNeuralNetwork(nn.Module):
     def __init__(self, num_layers, input_size, hidden_size, output_size):
         super(SimpleNeuralNetwork, self).__init__()
         self.input_layer = nn.Linear(input_size, hidden_size)
-        self.hidden_layers = []
-        for _ in range(num_layers):
-            layer = nn.Sequential(
+        self.hidden_layers = nn.ModuleList([
+            nn.Sequential(
                 nn.Linear(hidden_size, hidden_size),
                 nn.ReLU()
-            )
-            self.hidden_layers.append(layer)
+            ) for _ in range(num_layers)
+        ])
 
         self.output_layer = nn.Linear(hidden_size, output_size)
-        self.sigmoid = nn.Sigmoid()
+
+    def calculate_loss(self, player, hitbox, in_glue, output):
+        print(output)
+        loss_x = abs(player.hitbox.x - hitbox.x)/WINDOW_X
+        loss_y = abs(player.hitbox.y - hitbox.y)/WINDOW_Y
+        loss = (loss_x + loss_y)/2
+        if in_glue:
+            loss *= 2
+        if player.in_glue:
+            loss /= 2
+        '''
+        print(output.grad_fn)
+        loss_tensor = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device)
+        target = torch.zeros_like(output).to(device)
+        loss = torch.mean(output - (1.0 - loss_tensor) ** 2)
+        print(loss)
+        '''
+        loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device)
+        loss = torch.mean(abs((abs(output) + (loss*100))/100)*10)
+        print(loss)
+        return loss
 
     def forward(self, x):
         # Input tensor idea: [aix, aiy, dx, dy, player_x, player_y, glue_x1, glue_y1, glue_x2, glue_y2, ...]
@@ -173,7 +267,6 @@ class SimpleNeuralNetwork(nn.Module):
         for layer in self.hidden_layers:
             x = layer(x)
         x = self.output_layer(x)
-        x = self.sigmoid(x)
 
         # Output tensor idea: [up, down, left, right]
         # where up, down, left, and right are the AI's actions to move. Each variable will be between 0 and 1. 
@@ -207,6 +300,9 @@ def main():
     for _ in range(GLUES):
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
+    model = SimpleNeuralNetwork(2, 6+2*GLUES, 64, 4).to(device)
+    ai = AI(WINDOW_X/2-25, WINDOW_Y/2-25, 50, 50, window, RED, model, player)
+    objects.append(ai)
 
     # Game loop, YIPPEEEEEEE
     while running:
@@ -214,6 +310,27 @@ def main():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 running = False
+        try:
+            objects[0].player_move()
+            if objects[0].health <= 0:
+                print("Player is dead")
+                del objects[0]
+                main()
+                break
+        except Exception:
+            pass
+        objects[1].ai_move(glues)
+        for obj in objects:
+            obj.in_glue = False
+        for glue in glues:
+            glue.check_for_collisions(objects, pygame.time.get_ticks())
+        draw_game(objects, glues)
+        clock.tick(60)
+
+
+if __name__ == "__main__":
+    main()
+    running = False
         try:
             objects[0].player_move()
             if objects[0].health <= 0:
