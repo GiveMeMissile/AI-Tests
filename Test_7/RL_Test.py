@@ -144,6 +144,7 @@ class AI(Object):
         self.player = player
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.00001)
         self.in_glue = False
+        self.timer = 0
 
     def calculate_loss(self):
         loss_x = abs(self.player.hitbox.x - self.hitbox.x)/WINDOW_X
@@ -159,18 +160,19 @@ class AI(Object):
         # Prepare the input tensors to be fed into the neural network.
         X = torch.tensor([
             self.hitbox.x, 
-            self.hitbox.y, 
-            self.dx, 
-            self.dy, 
+            self.hitbox.y,
             self.player.hitbox.x, 
             self.player.hitbox.y
             ], dtype=torch.float32).to(device)
+        
         list_glues_location = []
         for glue in glues:
             list_glues_location.append(glue.hitbox.x)
             list_glues_location.append(glue.hitbox.y)
+
         glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
         X = torch.cat((X, glue_tensor), dim=0)
+        
         X = X.to(device)
 
         # Feed the input tensor into the neural network and get the output tensor then process the data to get the direction of the AI's acceleration.
@@ -222,6 +224,16 @@ class AI(Object):
         loss.backward()
         self.optimizer.step()
 
+    def check_for_collisions(self, current_time):
+        # check for collision between the AI and player and removes 5 health from the player if they collide.
+        if self.hitbox.colliderect(self.player.hitbox) and (current_time - self.timer >= DAMAGE_COOLDOWN):
+            self.player.dx = self.dx/2
+            self.player.dy = self.dy/2
+            self.dx = self.player.dx/2
+            self.dy = self.player.dy/2
+            self.timer = current_time
+            self.player.health -= 5
+
 
 class SimpleNeuralNetwork(nn.Module):
     # A simple neural network which will control an object which will hunt the player.
@@ -247,15 +259,8 @@ class SimpleNeuralNetwork(nn.Module):
             loss *= 2
         if player.in_glue:
             loss /= 2
-        '''
-        print(output.grad_fn)
-        loss_tensor = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device)
-        target = torch.zeros_like(output).to(device)
-        loss = torch.mean(output - (1.0 - loss_tensor) ** 2)
-        print(loss)
-        '''
         loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device)
-        loss = torch.mean(abs((abs(output) + (loss*100))/100)*10)
+        loss = torch.mean((abs((abs(output) + (loss*100))/100)**2)*2)
         print(loss)
         return loss
 
@@ -293,16 +298,17 @@ def draw_game(objects, glues):
 def main():
     running = True
     clock = pygame.time.Clock()
-    player = Player(100, 100, 50, 50, window, WHITE)
+    player = Player(WINDOW_X/2-25, WINDOW_Y/2-25, 50, 50, window, WHITE)
     objects = []
     objects.append(player)
     glues = []
     for _ in range(GLUES):
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
-    model = SimpleNeuralNetwork(2, 6+2*GLUES, 64, 4).to(device)
-    ai = AI(WINDOW_X/2-25, WINDOW_Y/2-25, 50, 50, window, RED, model, player)
-    objects.append(ai)
+    model = SimpleNeuralNetwork(2, 4+2*GLUES, 64, 4).to(device)
+    for _ in range(6):
+        ai = AI(random.randint(0, WINDOW_X-50), random.randint(0, WINDOW_Y-50), 50, 50, window, RED, model, player)
+        objects.append(ai)
 
     # Game loop, YIPPEEEEEEE
     while running:
@@ -310,34 +316,20 @@ def main():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 running = False
-        try:
-            objects[0].player_move()
-            if objects[0].health <= 0:
-                print("Player is dead")
-                del objects[0]
-                main()
-                break
-        except Exception:
-            pass
-        objects[1].ai_move(glues)
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    # Reset the game if the space key is pressed.
+                    main()
+
         for obj in objects:
             obj.in_glue = False
-        for glue in glues:
-            glue.check_for_collisions(objects, pygame.time.get_ticks())
-        draw_game(objects, glues)
-        clock.tick(60)
-
-
-if __name__ == "__main__":
-    main()
-    running = False
-        try:
-            objects[0].player_move()
-            if objects[0].health <= 0:
-                print("Player is dead")
-                del objects[0]
-        except Exception:
-            pass
+            if isinstance(obj, Player):
+                obj.player_move()
+                if obj.health <= 0:
+                    main()
+            if isinstance(obj, AI):
+                obj.ai_move(glues)
+                obj.check_for_collisions(pygame.time.get_ticks())
         for glue in glues:
             glue.check_for_collisions(objects, pygame.time.get_ticks())
         draw_game(objects, glues)
