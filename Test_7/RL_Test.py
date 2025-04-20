@@ -3,20 +3,29 @@ import pygame
 import random
 from torch import nn
 
-
+# Game constants
 WINDOW_X, WINDOW_Y = 1500, 750
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 YELLOW = (255, 255, 0)
 RED = (255, 0, 0)
 
+# Glue constants
 GLUE_DIM = 75
 GLUES = 5
 
+# Other object contsants (player + AI objects)
 ACCELERATION = 1
 FRICTION = 0.5
 MAX_VELOCITY = 15
 DAMAGE_COOLDOWN = 1000
+PLAYER_DIM = 50
+
+# AI Constants
+NUM_LAYERS = 2
+INPUT_SIZE = 4 + 2 * GLUES
+HIDDEN_SIZE = 64
+OUTPUT_SIZE = 4
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
@@ -298,16 +307,16 @@ def draw_game(objects, glues):
 def main():
     running = True
     clock = pygame.time.Clock()
-    player = Player(WINDOW_X/2-25, WINDOW_Y/2-25, 50, 50, window, WHITE)
+    player = Player(WINDOW_X/2-PLAYER_DIM/2, WINDOW_Y/2-PLAYER_DIM/2, PLAYER_DIM, PLAYER_DIM, window, WHITE)
     objects = []
     objects.append(player)
     glues = []
     for _ in range(GLUES):
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
-    model = SimpleNeuralNetwork(2, 4+2*GLUES, 64, 4).to(device)
+    model = SimpleNeuralNetwork(NUM_LAYERS, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
     for _ in range(6):
-        ai = AI(random.randint(0, WINDOW_X-50), random.randint(0, WINDOW_Y-50), 50, 50, window, RED, model, player)
+        ai = AI(random.randint(0, WINDOW_X-PLAYER_DIM), random.randint(0, WINDOW_Y-PLAYER_DIM), PLAYER_DIM, PLAYER_DIM, window, RED, model, player)
         objects.append(ai)
 
     # Game loop, YIPPEEEEEEE
@@ -338,3 +347,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+   main()
