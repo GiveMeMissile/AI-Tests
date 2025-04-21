@@ -26,6 +26,7 @@ NUM_LAYERS = 2
 INPUT_SIZE = 4 + 2 * GLUES
 HIDDEN_SIZE = 64
 OUTPUT_SIZE = 4
+SAVE_FILE = "Models/model_001.pth"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
@@ -342,6 +343,12 @@ def main():
             glue.check_for_collisions(objects, pygame.time.get_ticks())
         draw_game(objects, glues)
         clock.tick(60)
+
+    torch.save(model.state_dict(), SAVE_FILE)
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
