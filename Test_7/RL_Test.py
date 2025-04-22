@@ -27,6 +27,7 @@ INPUT_SIZE = 4 + 2 * GLUES
 HIDDEN_SIZE = 64
 OUTPUT_SIZE = 4
 SAVE_FILE = "Models/model_001.pth"
+LEARNING_RATE = 0.00001
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
@@ -67,12 +68,30 @@ class Object:
             self.hitbox.x -= self.dx
             self.dx = -self.dx/2
 
+        if self.hitbox.x < -25:
+            self.hitbox.x += 100
+        elif self.hitbox.x > WINDOW_X + 25:
+            self.hitbox.x -= 100
+
+        if self.hitbox.y < -25:
+            self.hitbox.y += 100
+        elif self.hitbox.y > WINDOW_Y + 25:
+            self.hitbox.y -= 100
+
         if self.hitbox.y < 0:
             self.hitbox.y -= self.dy
             self.dy = -self.dy/2
         elif self.hitbox.y > WINDOW_Y - self.height:
             self.hitbox.y -= self.dy
             self.dy = -self.dy/2
+
+    def random_move(self):
+        # Randomly moves the object in a random direction. This is used for testing purposes.
+        self.dx = random.randint(-1, 1) * ACCELERATION*2
+        self.dy = random.randint(-1, 1) * ACCELERATION*2
+        self.move()
+        self.check_bounds()
+
 
 
 class Glue(Object):
@@ -152,19 +171,9 @@ class AI(Object):
         super().__init__(x, y, width, height, window, color)
         self.model = model
         self.player = player
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.00001)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=LEARNING_RATE)
         self.in_glue = False
         self.timer = 0
-
-    def calculate_loss(self):
-        loss_x = abs(self.player.hitbox.x - self.hitbox.x)/WINDOW_X
-        loss_y = abs(self.player.hitbox.y - self.hitbox.y)/WINDOW_Y
-        loss = (loss_x + loss_y)/2
-        if self.in_glue:
-            loss *= 2
-        if self.player.in_glue:
-            loss /= 2
-        return loss
 
     def ai_move(self, glues):
         # Prepare the input tensors to be fed into the neural network.
@@ -328,14 +337,23 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     # Reset the game if the space key is pressed.
-                    main()
+                    try: 
+                        main()
+                    except RecursionError:
+                        running = False
+                        print("RecursionError: Too many recursions. Program will now exit.")
 
         for obj in objects:
             obj.in_glue = False
             if isinstance(obj, Player):
                 obj.player_move()
+                # obj.random_move()
                 if obj.health <= 0:
-                    main()
+                    try:
+                        main()
+                    except RecursionError:
+                        running = False
+                        print("RecursionError: Too many recursions. Program will now exit.")
             if isinstance(obj, AI):
                 obj.ai_move(glues)
                 obj.check_for_collisions(pygame.time.get_ticks())
@@ -345,6 +363,7 @@ def main():
         clock.tick(60)
 
     torch.save(model.state_dict(), SAVE_FILE)
+    pygame.quit()
 
 
 if __name__ == "__main__":
