@@ -12,7 +12,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 5
+GLUES = 10
 
 # Other object contsants (player + AI objects)
 ACCELERATION = 1
@@ -20,6 +20,7 @@ FRICTION = 0.5
 MAX_VELOCITY = 15
 DAMAGE_COOLDOWN = 1000
 PLAYER_DIM = 50
+RANDOM_MOVE = False
 
 # AI Constants
 NUM_LAYERS = 2
@@ -47,6 +48,7 @@ class Object:
         self.dy = 0
         self.color = color
         self.window = window
+        self.override = not RANDOM_MOVE
 
     def display(self):
         pygame.draw.rect(self.window, self.color, self.hitbox)
@@ -86,11 +88,38 @@ class Object:
             self.dy = -self.dy/2
 
     def random_move(self):
+        if self.override:
+            return
         # Randomly moves the object in a random direction. This is used for testing purposes.
         self.dx = random.randint(-1, 1) * ACCELERATION*2
         self.dy = random.randint(-1, 1) * ACCELERATION*2
         self.move()
         self.check_bounds()
+
+    def apply_friction(self):
+        if (self.dx > 0):
+            self.dx -= FRICTION
+        elif (self.dx < 0):
+            self.dx += FRICTION
+        if (self.dy > 0):
+            self.dy -= FRICTION
+        elif (self.dy < 0):
+            self.dy += FRICTION
+    
+    def check_max_velocity(self):
+        if self.dx > MAX_VELOCITY:
+            self.dx = MAX_VELOCITY
+        elif self.dx < -MAX_VELOCITY:
+            self.dx = -MAX_VELOCITY
+        if self.dy > MAX_VELOCITY:
+            self.dy = MAX_VELOCITY
+        elif self.dy < -MAX_VELOCITY:
+            self.dy = -MAX_VELOCITY
+
+    def get_center(self):
+        # Returns the center of the object.
+        return self.hitbox.x + self.width/2, self.hitbox.y + self.height/2
+        
 
 
 
@@ -132,34 +161,20 @@ class Player(Object):
         # Checking for key clicks and adding the proper acceleration to the velocity.
         if keys[pygame.K_w]:
             self.dy -= ACCELERATION
+            self.override = True
         if keys[pygame.K_s]:
             self.dy += ACCELERATION
+            self.override = True
         if keys[pygame.K_a]:
             self.dx -= ACCELERATION
+            self.override = True
         if keys[pygame.K_d]:
             self.dx += ACCELERATION
+            self.override = True
+        
 
-        # Applying fiction to the player's velocity.
-        if (self.dx > 0):
-            self.dx -= FRICTION
-        elif (self.dx < 0):
-            self.dx += FRICTION
-        if (self.dy > 0):
-            self.dy -= FRICTION
-        elif (self.dy < 0):
-            self.dy += FRICTION
-
-        # Checking for max velocity and setting the velocity to the max velocity if it is greater than the max velocity.
-        if self.dx > MAX_VELOCITY:
-            self.dx = MAX_VELOCITY
-        elif self.dx < -MAX_VELOCITY:
-            self.dx = -MAX_VELOCITY
-        if self.dy > MAX_VELOCITY:
-            self.dy = MAX_VELOCITY
-        elif self.dy < -MAX_VELOCITY:
-            self.dy = -MAX_VELOCITY
-
-        # And finally moving the player and checking for bounds.
+        self.apply_friction()
+        self.check_max_velocity()
         self.move()
         self.check_bounds()
 
@@ -177,17 +192,20 @@ class AI(Object):
 
     def ai_move(self, glues):
         # Prepare the input tensors to be fed into the neural network.
+        x, y = self.player.get_center()
+        x_ai, y_ai = self.get_center()
         X = torch.tensor([
-            self.hitbox.x, 
-            self.hitbox.y,
-            self.player.hitbox.x, 
-            self.player.hitbox.y
+            x_ai, 
+            y_ai,
+            x, 
+            y
             ], dtype=torch.float32).to(device)
         
         list_glues_location = []
         for glue in glues:
-            list_glues_location.append(glue.hitbox.x)
-            list_glues_location.append(glue.hitbox.y)
+            x_glue, y_glue = glue.get_center()
+            list_glues_location.append(x_glue)
+            list_glues_location.append(y_glue)
 
         glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
         X = torch.cat((X, glue_tensor), dim=0)
@@ -199,7 +217,6 @@ class AI(Object):
         original_output = self.model(X)
         output = torch.sigmoid(original_output).to("cpu")
         output = (output > 0.5)
-        print(output)
         if (output[0]):
             self.dy -= ACCELERATION
         if (output[1]):
@@ -209,26 +226,8 @@ class AI(Object):
         if (output[3]):
             self.dx += ACCELERATION
 
-        # Applying fiction to the AI's velocity.
-        if (self.dx > 0):
-            self.dx -= FRICTION
-        elif (self.dx < 0):
-            self.dx += FRICTION
-        if (self.dy > 0):
-            self.dy -= FRICTION
-        elif (self.dy < 0):
-            self.dy += FRICTION
-
-        # Cheing for max velocity and setting the velocity to the max velocity if it is greater than the max velocity.
-        if self.dx > MAX_VELOCITY:
-            self.dx = MAX_VELOCITY
-        elif self.dx < -MAX_VELOCITY:
-            self.dx = -MAX_VELOCITY
-        if self.dy > MAX_VELOCITY:
-            self.dy = MAX_VELOCITY
-        elif self.dy < -MAX_VELOCITY:
-            self.dy = -MAX_VELOCITY
-        
+        self.apply_friction()
+        self.check_max_velocity()        
         self.move()
         self.check_bounds()
         self.train_ai(original_output)
@@ -238,8 +237,22 @@ class AI(Object):
         # Trains the AI using the custom loss function. The loss function is based on the distance between the AI and the player.
         # The loss function is used to update the weights of the neural network.
 
+        ai_x, ai_y = self.get_center()
+        player_x, player_y = self.player.get_center()
+
+        proper_dx, proper_dy = False, False
+        if self.dx > 0 and player_x > ai_x:
+            proper_dx = True
+        elif self.dx < 0 and player_x < ai_x:
+            proper_dx = True
+
+        if self.dy > 0 and player_y > ai_y:
+            proper_dy = True
+        elif self.dy < 0 and player_y < ai_y:
+            proper_dy = True
+
         self.optimizer.zero_grad()
-        loss = self.model.calculate_loss(self.player, self.hitbox, self.in_glue, output)
+        loss = self.model.calculate_loss(self.player, self, self.in_glue, output, proper_dx, proper_dy)
         loss.backward()
         self.optimizer.step()
 
@@ -251,7 +264,7 @@ class AI(Object):
             self.dx = self.player.dx/2
             self.dy = self.player.dy/2
             self.timer = current_time
-            self.player.health -= 5
+            self.player.health -= 2
 
 
 class SimpleNeuralNetwork(nn.Module):
@@ -269,18 +282,22 @@ class SimpleNeuralNetwork(nn.Module):
 
         self.output_layer = nn.Linear(hidden_size, output_size)
 
-    def calculate_loss(self, player, hitbox, in_glue, output):
-        print(output)
-        loss_x = abs(player.hitbox.x - hitbox.x)/WINDOW_X
-        loss_y = abs(player.hitbox.y - hitbox.y)/WINDOW_Y
+    def calculate_loss(self, player, ai, in_glue, output, proper_direction_x, proper_direction_y):
+        ai_x, ai_y = ai.get_center()
+        player_x, player_y = player.get_center()
+        loss_x = abs(player_x - ai_x)/WINDOW_X
+        loss_y = abs(player_y - ai_y)/WINDOW_Y
         loss = (loss_x + loss_y)/2
         if in_glue:
-            loss *= 2
+            loss *= 20
         if player.in_glue:
             loss /= 2
+        if proper_direction_x:
+            loss /= 5
+        if proper_direction_y:
+            loss /= 5
         loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device)
         loss = torch.mean((abs((abs(output) + (loss*100))/100)**2)*2)
-        print(loss)
         return loss
 
     def forward(self, x):
@@ -342,12 +359,14 @@ def main():
                     except RecursionError:
                         running = False
                         print("RecursionError: Too many recursions. Program will now exit.")
+                elif event.key == pygame.K_LSHIFT:
+                    player.override = not player.override
 
         for obj in objects:
             obj.in_glue = False
             if isinstance(obj, Player):
                 obj.player_move()
-                # obj.random_move()
+                obj.random_move()
                 if obj.health <= 0:
                     try:
                         main()
@@ -362,14 +381,10 @@ def main():
         draw_game(objects, glues)
         clock.tick(60)
 
+
     torch.save(model.state_dict(), SAVE_FILE)
     pygame.quit()
 
 
 if __name__ == "__main__":
     main()
-
-
-if __name__ == "__main__":
-    main()
-   main()
