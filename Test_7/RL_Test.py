@@ -23,9 +23,9 @@ PLAYER_DIM = 50
 RANDOM_MOVE = False
 
 # AI Constants
-NUM_LAYERS = 2
+NUM_LAYERS = 4
 INPUT_SIZE = 4 + 2 * GLUES
-HIDDEN_SIZE = 64
+HIDDEN_SIZE = 128
 OUTPUT_SIZE = 4
 SAVE_FILE = "Models/model_001.pth"
 LEARNING_RATE = 0.00001
@@ -119,8 +119,6 @@ class Object:
     def get_center(self):
         # Returns the center of the object.
         return self.hitbox.x + self.width/2, self.hitbox.y + self.height/2
-        
-
 
 
 class Glue(Object):
@@ -129,16 +127,40 @@ class Glue(Object):
     def __init__(self, x, y, width, height, window, color):
         super().__init__(x, y, width, height, window, color)
         self.timer = 0
+        self.glue_drag = 0.5
+
+    def alter_collision_velocity(self, dx, dy):
+        # This function is used to alter the velocity of the object when it collides with the glue.
+        if dx > 0:
+            dx -= self.glue_drag * dx
+        elif dx < 0:
+            dx -= self.glue_drag * dx
+        
+        if dy > 0:
+            dy -= self.glue_drag * dy
+        elif dy < 0:
+            dy -= self.glue_drag * dy
+        return dx, dy
+    
+    def calculate_glue_value(self, obj):
+        # This function calculates the glue value which is used within the loss calculation of the AI.
+        # This value increases the further the AI model is in the glue.
+        obj_x, obj_y = obj.get_center()
+        glue_x, glue_y = self.get_center()
+        glue_value = ((self.width/2 + obj.width/2) - (abs(obj_x - glue_x))) + ((self.height + obj.height)/2 - (abs(obj_y - glue_y)))
+        glue_value = glue_value/(((self.width/2 + obj.width/2) + (self.height/2 + obj.height/2))/10) + 1
+        return glue_value
 
     def check_for_collisions(self, objects, current_time):
         for obj in objects:
             # Managing collisions with da glue.
             if self.hitbox.colliderect(obj.hitbox):
-                obj.dx = obj.dx/2
-                obj.dy = obj.dy/2
-                if not isinstance(obj, Player) and not isinstance(obj, AI):
-                    continue
-                obj.in_glue = True
+
+                obj.dx, obj.dy = self.alter_collision_velocity(obj.dx, obj.dy)
+                
+                if isinstance(obj, AI):
+                    obj.glue_value = self.calculate_glue_value(obj)
+                
                 if not isinstance(obj, Player):
                     continue
                 # Damages the player for colliding with glue.
@@ -152,7 +174,6 @@ class Player(Object):
     def __init__(self, x, y, width, height, window, color):
         super().__init__(x, y, width, height, window, color)
         self.health = 10
-        self.in_glue = False
 
     def player_move(self):
         # Player movement using WASD keys. The player can move in all directions and has a maximum velocity.
@@ -187,7 +208,7 @@ class AI(Object):
         self.model = model
         self.player = player
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=LEARNING_RATE)
-        self.in_glue = False
+        self.glue_value = 0
         self.timer = 0
 
     def ai_move(self, glues):
@@ -245,14 +266,18 @@ class AI(Object):
             proper_dx = True
         elif self.dx < 0 and player_x < ai_x:
             proper_dx = True
+        elif self.dx == 0 and (player_x + PLAYER_DIM/2 > ai_x and player_x - PLAYER_DIM/2 < ai_x):
+            proper_dx = True
 
         if self.dy > 0 and player_y > ai_y:
             proper_dy = True
         elif self.dy < 0 and player_y < ai_y:
             proper_dy = True
+        elif self.dy == 0 and (player_y + PLAYER_DIM/2 > ai_y and player_y - PLAYER_DIM/2 < ai_y):
+            proper_dy = True
 
         self.optimizer.zero_grad()
-        loss = self.model.calculate_loss(self.player, self, self.in_glue, output, proper_dx, proper_dy)
+        loss = self.model.calculate_loss(self.player, self, self.glue_value, output, proper_dx, proper_dy)
         loss.backward()
         self.optimizer.step()
 
@@ -282,20 +307,22 @@ class SimpleNeuralNetwork(nn.Module):
 
         self.output_layer = nn.Linear(hidden_size, output_size)
 
-    def calculate_loss(self, player, ai, in_glue, output, proper_direction_x, proper_direction_y):
+    def calculate_loss(self, player, ai, glue_value, output, proper_direction_x, proper_direction_y):
         ai_x, ai_y = ai.get_center()
         player_x, player_y = player.get_center()
         loss_x = abs(player_x - ai_x)/WINDOW_X
         loss_y = abs(player_y - ai_y)/WINDOW_Y
         loss = (loss_x + loss_y)/2
-        if in_glue:
-            loss *= 20
-        if player.in_glue:
-            loss /= 2
+        if glue_value > 0:
+            loss *= glue_value
+            proper_direction_x = False
+            proper_direction_y = False
         if proper_direction_x:
             loss /= 5
         if proper_direction_y:
             loss /= 5
+        if proper_direction_x and proper_direction_y:
+            loss = 0
         loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device)
         loss = torch.mean((abs((abs(output) + (loss*100))/100)**2)*2)
         return loss
@@ -317,17 +344,18 @@ class SimpleNeuralNetwork(nn.Module):
 def draw_game(objects, glues):
     # Draws the game on the window. Quite self explanatory.
     window.fill(BLACK)
+    
+
+    for obj in objects:
+        obj.display()
+    for glue in glues:
+        glue.display()
 
     try: 
         text = font.render(f"Health: {objects[0].health}", True, WHITE)
     except Exception:
         text = font.render("Health: 0", True, WHITE)
     window.blit(text, (10, 10))
-
-    for obj in objects:
-        obj.display()
-    for glue in glues:
-        glue.display()
     pygame.display.flip()
 
 
@@ -342,7 +370,7 @@ def main():
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
     model = SimpleNeuralNetwork(NUM_LAYERS, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
-    for _ in range(6):
+    for _ in range(10):
         ai = AI(random.randint(0, WINDOW_X-PLAYER_DIM), random.randint(0, WINDOW_Y-PLAYER_DIM), PLAYER_DIM, PLAYER_DIM, window, RED, model, player)
         objects.append(ai)
 
@@ -362,8 +390,11 @@ def main():
                 elif event.key == pygame.K_LSHIFT:
                     player.override = not player.override
 
+
+        for glue in glues:
+            glue.check_for_collisions(objects, pygame.time.get_ticks())
+
         for obj in objects:
-            obj.in_glue = False
             if isinstance(obj, Player):
                 obj.player_move()
                 obj.random_move()
@@ -376,8 +407,7 @@ def main():
             if isinstance(obj, AI):
                 obj.ai_move(glues)
                 obj.check_for_collisions(pygame.time.get_ticks())
-        for glue in glues:
-            glue.check_for_collisions(objects, pygame.time.get_ticks())
+            obj.in_glue = False
         draw_game(objects, glues)
         clock.tick(60)
 
