@@ -13,6 +13,7 @@ RED = (255, 0, 0)
 # Glue constants
 GLUE_DIM = 75
 GLUES = 10
+GLUE_MOVEMENT_TIME = 5000
 
 # Other object contsants (player + AI objects)
 ACCELERATION = 1
@@ -30,6 +31,7 @@ OUTPUT_SIZE = 4
 SAVE_FILE = "Models/Simple_Models/"
 TEXT_FILE = SAVE_FILE + "current_model.txt"
 LEARNING_RATE = 0.00001
+NUM_AI_OBJECTS = 10
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
@@ -50,6 +52,7 @@ class Object:
         self.color = color
         self.window = window
         self.override = not RANDOM_MOVE
+        self.amplifier = 1
 
     def display(self):
         pygame.draw.rect(self.window, self.color, self.hitbox)
@@ -92,8 +95,8 @@ class Object:
         if self.override:
             return
         # Randomly moves the object in a random direction. This is used for testing purposes.
-        self.dx = random.randint(-1, 1) * ACCELERATION*2
-        self.dy = random.randint(-1, 1) * ACCELERATION*2
+        self.dx = random.randint(-1, 1) * ACCELERATION * self.amplifier
+        self.dy = random.randint(-1, 1) * ACCELERATION * self.amplifier
         self.move()
         self.check_bounds()
 
@@ -129,8 +132,11 @@ class Glue(Object):
         super().__init__(x, y, width, height, window, color)
         self.timer = 0
         self.glue_drag = 0.5
+        self.amplifier = 10
+        self.movement_timer = 0
+        self.override = False
 
-    def alter_collision_velocity(self, dx, dy):
+    def alter_velocity(self, dx, dy):
         # This function is used to alter the velocity of the object when it collides with the glue.
         if dx > 0:
             dx -= self.glue_drag * dx
@@ -141,6 +147,7 @@ class Glue(Object):
             dy -= self.glue_drag * dy
         elif dy < 0:
             dy -= self.glue_drag * dy
+
         return dx, dy
     
     def calculate_glue_value(self, obj):
@@ -157,7 +164,11 @@ class Glue(Object):
             # Managing collisions with da glue.
             if self.hitbox.colliderect(obj.hitbox):
 
-                obj.dx, obj.dy = self.alter_collision_velocity(obj.dx, obj.dy)
+                if self.dx == 0 and self.dy == 0:
+                    obj.dx, obj.dy = self.alter_velocity(obj.dx, obj.dy)
+                else:
+                    obj.dx += (self.glue_drag * self.dx)/5
+                    obj.dy += (self.glue_drag * self.dy)/5
                 
                 if isinstance(obj, AI):
                     obj.glue_value = self.calculate_glue_value(obj)
@@ -169,12 +180,12 @@ class Glue(Object):
                     obj.health -= 1
                     self.timer = current_time
 
-
                           
 class Player(Object):
     def __init__(self, x, y, width, height, window, color):
         super().__init__(x, y, width, height, window, color)
-        self.health = 10
+        self.health = 30
+        self.amplifier = 2
 
     def player_move(self):
         # Player movement using WASD keys. The player can move in all directions and has a maximum velocity.
@@ -286,10 +297,11 @@ class AI(Object):
     def check_for_collisions(self, current_time):
         # check for collision between the AI and player and removes 5 health from the player if they collide.
         if self.hitbox.colliderect(self.player.hitbox) and (current_time - self.timer >= DAMAGE_COOLDOWN):
+            old_player_dx, old_player_dy = self.player.dx, self.player.dy
             self.player.dx = self.dx/2
             self.player.dy = self.dy/2
-            self.dx = self.player.dx/2
-            self.dy = self.player.dy/2
+            self.dx = old_player_dx/2
+            self.dy = old_player_dy/2
             self.timer = current_time
             self.player.health -= 2
 
@@ -399,7 +411,7 @@ def main():
         glues.append(glue)
     model = SimpleNeuralNetwork(NUM_LAYERS, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
     model, model_number = load_model(model, TEXT_FILE)
-    for _ in range(10):
+    for _ in range(NUM_AI_OBJECTS):
         ai = AI(random.randint(0, WINDOW_X-PLAYER_DIM), random.randint(0, WINDOW_Y-PLAYER_DIM), PLAYER_DIM, PLAYER_DIM, window, RED, model, player)
         objects.append(ai)
 
@@ -423,6 +435,13 @@ def main():
 
         for glue in glues:
             glue.check_for_collisions(objects, pygame.time.get_ticks())
+            glue.apply_friction()
+            if (pygame.time.get_ticks() - glue.movement_timer >= GLUE_MOVEMENT_TIME):
+                glue.random_move()
+                glue.movement_timer = pygame.time.get_ticks()
+            else:
+                glue.move()
+                glue.check_bounds()
 
         for obj in objects:
             if isinstance(obj, Player):
