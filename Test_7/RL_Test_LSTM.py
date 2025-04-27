@@ -12,7 +12,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 10
+GLUES = 0
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object contsants (player + AI objects)
@@ -31,7 +31,8 @@ OUTPUT_SIZE = 4
 SAVE_FILE = "Models/LSTM_Models/"
 TEXT_FILE = SAVE_FILE + "current_model.txt"
 LEARNING_RATE = 0.00001
-NUM_AI_OBJECTS = 1
+AI_FORWARD_TIME = 1000/60 # The AI object will change its directional vector 60 times each second thanks to this variable, this will be used for testing later
+NUM_AI_OBJECTS = 5
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
@@ -156,7 +157,21 @@ class Glue(Object):
         obj_x, obj_y = obj.get_center()
         glue_x, glue_y = self.get_center()
         glue_value = ((self.width/2 + obj.width/2) - (abs(obj_x - glue_x))) + ((self.height + obj.height)/2 - (abs(obj_y - glue_y)))
-        glue_value = glue_value/(((self.width/2 + obj.width/2) + (self.height/2 + obj.height/2))/10) + 1
+        glue_value = glue_value/(((self.width/2 + obj.width/2) + (self.height/2 + obj.height/2))/10) + 1.5
+
+        if (obj.dx < 0 and obj.dy < 0) and (obj_x < glue_x and obj_y < glue_y):
+            return 0
+        if (obj.dx > 0 and obj.dy < 0) and (obj_x > glue_x and obj_y < glue_y):
+            return 0
+        if obj.dx > 0 and obj_x > glue_x:
+            glue_value /= 5
+        if obj.dx < 0 and obj_x < glue_x:
+            glue_value /= 5
+        if obj.dy > 0 and obj_y > glue_y:
+            glue_value /= 5
+        if obj.dy < 0 and obj_y < glue_y:
+            glue_value /= 5
+
         return glue_value
 
     def check_for_collisions(self, objects, current_time):
@@ -222,50 +237,64 @@ class AI(Object):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=LEARNING_RATE)
         self.glue_value = 0
         self.timer = 0
+        self.h0 = None
+        self.c0 = None
+        self.directional_vector = None
+        self.change_direction_timer = 0
 
-    def ai_move(self, glues):
+    def ai_move(self, glues, current_time):
         # Prepare the input tensors to be fed into the neural network.
-        x, y = self.player.get_center()
-        x_ai, y_ai = self.get_center()
-        X = torch.tensor([
-            x_ai, 
-            y_ai,
-            x, 
-            y
-            ], dtype=torch.float32).to(device)
-        
-        list_glues_location = []
-        for glue in glues:
-            x_glue, y_glue = glue.get_center()
-            list_glues_location.append(x_glue)
-            list_glues_location.append(y_glue)
+        changed = False
+        if self.directional_vector is None:
+            changed = True
+            x, y = self.player.get_center()
+            x_ai, y_ai = self.get_center()
+            X = torch.tensor([
+                x_ai, 
+                y_ai,
+                x, 
+                y
+                ], dtype=torch.float32).to(device)
+            
+            list_glues_location = []
+            for glue in glues:
+                x_glue, y_glue = glue.get_center()
+                list_glues_location.append(x_glue)
+                list_glues_location.append(y_glue)
 
-        glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
-        X = torch.cat((X, glue_tensor), dim=0)
-        X = X.unsqueeze(0)
-        
-        X = X.to(device)
+            glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
+            X = torch.cat((X, glue_tensor), dim=0)
+            X = X.unsqueeze(0)
+            
+            X = X.to(device)
 
-        # Feed the input tensor into the neural network and get the output tensor then process the data to get the direction of the AI's acceleration.
-        # output is as a vector containung 4 values that are from 0-1. With each value representing a direction: [up, down, left, right].
-        original_output = self.model(X)
-        output = torch.sigmoid(original_output).to("cpu")
-        output = (output > 0.5)
-        if (output[0]):
+            # Feed the input tensor into the neural network and get the output tensor then process the data to get the direction of the AI's acceleration.
+            # output is as a vector containung 4 values that are from 0-1. With each value representing a direction: [up, down, left, right].
+            original_output, self.h0, self.c0 = self.model(X, self.h0, self.c0)
+            original_output = original_output.squeeze(0)
+            output = torch.sigmoid(original_output).to("cpu")
+            output = (output > 0.5)
+            self.directional_vector = output
+
+        if (self.directional_vector[0]):
             self.dy -= ACCELERATION
-        if (output[1]):
+        if (self.directional_vector[1]):
             self.dy += ACCELERATION
-        if (output[2]):
+        if (self.directional_vector[2]):
             self.dx -= ACCELERATION
-        if (output[3]):
+        if (self.directional_vector[3]):
             self.dx += ACCELERATION
 
         self.apply_friction()
         self.check_max_velocity()        
         self.move()
         self.check_bounds()
-        self.train_ai(original_output)
+        if changed:
+            self.train_ai(original_output)
         self.glue_value = 0
+        if (current_time - self.change_direction_timer >= AI_FORWARD_TIME):
+            self.directional_vector = None
+            self.change_direction_timer = current_time
             
 
     def train_ai(self, output):
@@ -313,16 +342,15 @@ class LSTM(nn.Module):
     def __init__(self, num_layers, input_size, hidden_size, output_size):
         super(LSTM, self).__init__()
 
-        self.h0 = None
-        self.c0 = None
         self.num_layers = num_layers
         self.hidden_size = hidden_size
 
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
         self.output_layer = nn.Linear(hidden_size, output_size)
         
-
     def calculate_loss(self, player, ai, glue_value, output, proper_direction_x, proper_direction_y):
+        # Will change this loss function later for better results, but for now this will do for now.
+
         ai_x, ai_y = ai.get_center()
         player_x, player_y = player.get_center()
         loss_x = abs(player_x - ai_x)/WINDOW_X
@@ -342,22 +370,24 @@ class LSTM(nn.Module):
         loss = torch.mean((abs((abs(output) + (loss*100))/100)**2)*2)
         return loss
 
-    def forward(self, x):
+    def forward(self, x, h0, c0):
         # Input tensor idea: [aix, aiy, dx, dy, player_x, player_y, glue_x1, glue_y1, glue_x2, glue_y2, ...]
         # where dx and dy are the player's velocity, player_x and player_y are the player's position,
 
-        if (self.h0 is None):
-            self.h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
-        if (self.c0 is None):
-            self.c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        if (h0 is None):
+            h0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
+        if (c0 is None):
+            c0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
         
-        x, (self.h0, self.c0) = self.lstm(x, (self.h0, self.c0))
+        x, (h0, c0) = self.lstm(x, (h0, c0))
         x = self.output_layer(x)
         
+        h0 = h0.detach()
+        c0 = c0.detach()
 
         # Output tensor idea: [up, down, left, right]
         # where up, down, left, and right are the AI's actions to move. Each variable will be between 0 and 1. 
-        return x
+        return x, h0, c0
 
 
 def load_model(model, txt_file):
@@ -431,6 +461,7 @@ def main():
                     try:
                         # save_model(model, model_number, TEXT_FILE)
                         main()
+                        running = False
                     except RecursionError:
                         running = False
                         print("RecursionError: Too many recursions. Program will now exit.")
@@ -456,11 +487,12 @@ def main():
                     try:
                         # save_model(model, model_number, TEXT_FILE)
                         main()
+                        running = False
                     except RecursionError:
                         running = False
                         print("RecursionError: Too many recursions. Program will now exit.")
             if isinstance(obj, AI):
-                obj.ai_move(glues)
+                obj.ai_move(glues, pygame.time.get_ticks())
                 obj.check_for_collisions(pygame.time.get_ticks())
             obj.in_glue = False
         draw_game(objects, glues)
