@@ -21,7 +21,7 @@ FRICTION = 0.5
 MAX_VELOCITY = 15
 DAMAGE_COOLDOWN = 1000
 PLAYER_DIM = 50
-RANDOM_MOVE = False
+RANDOM_MOVE = True
 
 # AI Constants
 NUM_LAYERS = 4
@@ -30,8 +30,8 @@ HIDDEN_SIZE = 128
 OUTPUT_SIZE = 4
 SAVE_FILE = "Models/LSTM_Models/"
 TEXT_FILE = SAVE_FILE + "current_model.txt"
-LEARNING_RATE = 0.00001
-AI_FORWARD_TIME = 1000/60 # The AI object will change its directional vector 60 times each second thanks to this variable, this will be used for testing later
+LEARNING_RATE = 0.000001
+AI_FORWARD_TIME = 1000/10 # The AI object will change its directional vector 60 times each second thanks to this variable, this will be used for testing later
 NUM_AI_OBJECTS = 5
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -96,8 +96,8 @@ class Object:
         if self.override:
             return
         # Randomly moves the object in a random direction. This is used for testing purposes.
-        self.dx = random.randint(-1, 1) * ACCELERATION * self.amplifier
-        self.dy = random.randint(-1, 1) * ACCELERATION * self.amplifier
+        self.dx += random.randint(-1, 1) * ACCELERATION * self.amplifier
+        self.dy += random.randint(-1, 1) * ACCELERATION * self.amplifier
         self.move()
         self.check_bounds()
 
@@ -200,7 +200,6 @@ class Player(Object):
     def __init__(self, x, y, width, height, window, color):
         super().__init__(x, y, width, height, window, color)
         self.health = 30
-        self.amplifier = 2
 
     def player_move(self):
         # Player movement using WASD keys. The player can move in all directions and has a maximum velocity.
@@ -356,18 +355,23 @@ class LSTM(nn.Module):
         loss_x = abs(player_x - ai_x)/WINDOW_X
         loss_y = abs(player_y - ai_y)/WINDOW_Y
         loss = (loss_x + loss_y)/2
+        loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device).to(device)
         if glue_value > 0:
             loss *= glue_value
             proper_direction_x = False
             proper_direction_y = False
+        
         if proper_direction_x:
-            loss /= 5
+            loss /= 2
         if proper_direction_y:
-            loss /= 5
+            loss /= 2
+        '''
         if proper_direction_x and proper_direction_y:
             loss = 0
-        loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device)
-        loss = torch.mean((abs((abs(output) + (loss*100))/100)**2)*2)
+        '''
+        output = torch.mean(output**2) * .01
+        loss = loss + output
+        loss = 2*loss**2
         return loss
 
     def forward(self, x, h0, c0):
@@ -411,9 +415,9 @@ def load_model(model, txt_file):
         
 def save_model(model, model_number, text_file):
     # Saves the model to a file.
-    torch.save(model.state_dict(), SAVE_FILE + "model_" +str(model_number+1) + ".pth")
+    torch.save(model.state_dict(), SAVE_FILE + "model_" +str(model_number) + ".pth")
     with open(text_file, "w") as f:
-        f.write(f"model_{model_number+1}.pth\n" + str(model_number+1))
+        f.write(f"model_{model_number}.pth\n" + str(model_number))
     print(f"Model {model_number} saved successfully.")
 
 
@@ -445,7 +449,7 @@ def main():
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
     model = LSTM(NUM_LAYERS, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
-    # model, model_number = load_model(model, TEXT_FILE)
+    model, model_number = load_model(model, TEXT_FILE)
     for _ in range(NUM_AI_OBJECTS):
         ai = AI(random.randint(0, WINDOW_X-PLAYER_DIM), random.randint(0, WINDOW_Y-PLAYER_DIM), PLAYER_DIM, PLAYER_DIM, window, RED, model, player)
         objects.append(ai)
@@ -459,7 +463,7 @@ def main():
                 if event.key == pygame.K_SPACE:
                     # Reset the game if the space key is pressed.
                     try:
-                        # save_model(model, model_number, TEXT_FILE)
+                        save_model(model, model_number, TEXT_FILE)
                         main()
                         running = False
                     except RecursionError:
@@ -485,7 +489,7 @@ def main():
                 obj.random_move()
                 if obj.health <= 0:
                     try:
-                        # save_model(model, model_number, TEXT_FILE)
+                        save_model(model, model_number, TEXT_FILE)
                         main()
                         running = False
                     except RecursionError:
@@ -499,7 +503,7 @@ def main():
         clock.tick(60)
 
 
-    # save_model(model, model_number, TEXT_FILE)
+    save_model(model, model_number, TEXT_FILE)
     pygame.quit()
 
 
