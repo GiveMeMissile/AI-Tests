@@ -1,4 +1,5 @@
 import torch
+import sys
 import pygame
 import random
 from torch import nn
@@ -12,7 +13,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 0
+GLUES = 10
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object contsants (player + AI objects)
@@ -25,14 +26,16 @@ RANDOM_MOVE = True
 
 # AI Constants
 NUM_LAYERS = 4
-INPUT_SIZE = 4 + 2 * GLUES
 HIDDEN_SIZE = 128
 OUTPUT_SIZE = 4
 SAVE_FILE = "Models/LSTM_Models/"
 TEXT_FILE = SAVE_FILE + "current_model.txt"
-LEARNING_RATE = 0.000001
+LEARNING_RATE = 0.0000001
 AI_FORWARD_TIME = 1000/10 # The AI object will change its directional vector 60 times each second thanks to this variable, this will be used for testing later
 NUM_AI_OBJECTS = 5
+NUM_SAVED_FRAMES = 60
+SEQUENCE_LENGTH = 4 + 2 * GLUES
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
@@ -69,11 +72,18 @@ class Object:
     # Checks for collisions with the boarders of the screen and it inverts the velocity. No going of the screen, Tehe.
 
         if self.hitbox.x < 0:
-            self.hitbox.x -= self.dx
+            self.hitbox.x = 0
             self.dx = -self.dx/2
         elif self.hitbox.x > WINDOW_X - self.width:
-            self.hitbox.x -= self.dx
+            self.hitbox.x = WINDOW_X - self.width
             self.dx = -self.dx/2
+
+        if self.hitbox.y < 0:
+            self.hitbox.y = 0
+            self.dy = -self.dy/2
+        elif self.hitbox.y > WINDOW_Y - self.height:
+            self.hitbox.y = WINDOW_Y - self.height
+            self.dy = -self.dy/2
 
         if self.hitbox.x < -25:
             self.hitbox.x += 100
@@ -85,13 +95,6 @@ class Object:
         elif self.hitbox.y > WINDOW_Y + 25:
             self.hitbox.y -= 100
 
-        if self.hitbox.y < 0:
-            self.hitbox.y -= self.dy
-            self.dy = -self.dy/2
-        elif self.hitbox.y > WINDOW_Y - self.height:
-            self.hitbox.y -= self.dy
-            self.dy = -self.dy/2
-
     def random_move(self):
         if self.override:
             return
@@ -102,14 +105,21 @@ class Object:
         self.check_bounds()
 
     def apply_friction(self):
-        if (self.dx > 0):
+
+        if self.dx > 0:
             self.dx -= FRICTION
-        elif (self.dx < 0):
+        elif self.dx < 0:
             self.dx += FRICTION
-        if (self.dy > 0):
+        if self.dy > 0:
             self.dy -= FRICTION
-        elif (self.dy < 0):
+        elif self.dy < 0:
             self.dy += FRICTION
+        
+        if self.dx < FRICTION and self.dx > -FRICTION:
+            self.dx = 0
+        if self.dy < FRICTION and self.dy > -FRICTION:
+            self.dy = 0
+            
     
     def check_max_velocity(self):
         if self.dx > MAX_VELOCITY:
@@ -139,6 +149,7 @@ class Glue(Object):
 
     def alter_velocity(self, dx, dy):
         # This function is used to alter the velocity of the object when it collides with the glue.
+
         if dx > 0:
             dx -= self.glue_drag * dx
         elif dx < 0:
@@ -148,6 +159,7 @@ class Glue(Object):
             dy -= self.glue_drag * dy
         elif dy < 0:
             dy -= self.glue_drag * dy
+        
 
         return dx, dy
     
@@ -181,6 +193,7 @@ class Glue(Object):
 
                 if self.dx == 0 and self.dy == 0:
                     obj.dx, obj.dy = self.alter_velocity(obj.dx, obj.dy)
+
                 else:
                     obj.dx += (self.glue_drag * self.dx)/5
                     obj.dy += (self.glue_drag * self.dy)/5
@@ -219,11 +232,10 @@ class Player(Object):
             self.dx += ACCELERATION
             self.override = True
         
-
+        self.check_bounds()
         self.apply_friction()
         self.check_max_velocity()
         self.move()
-        self.check_bounds()
 
 
 class AI(Object):
@@ -240,6 +252,16 @@ class AI(Object):
         self.c0 = None
         self.directional_vector = None
         self.change_direction_timer = 0
+        self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32)
+
+    def add_frame_to_memory(self, frame):
+
+        for i in range(NUM_SAVED_FRAMES):
+            if ((self.memory[NUM_SAVED_FRAMES - (i+1)] == torch.zeros(SEQUENCE_LENGTH, dtype=torch.float32)).sum().item() == SEQUENCE_LENGTH):
+                self.memory[NUM_SAVED_FRAMES - (i+1)] = frame
+                return
+        
+        self.memory = torch.cat((self.memory[1 : NUM_SAVED_FRAMES], frame), dim=0)
 
     def ai_move(self, glues, current_time):
         # Prepare the input tensors to be fed into the neural network.
@@ -263,17 +285,20 @@ class AI(Object):
 
             glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
             X = torch.cat((X, glue_tensor), dim=0)
-            X = X.unsqueeze(0)
+            X = X.unsqueeze(0).to("cpu")
+            self.add_frame_to_memory(X)
             
-            X = X.to(device)
+            self.memory = self.memory.to(device)
 
             # Feed the input tensor into the neural network and get the output tensor then process the data to get the direction of the AI's acceleration.
             # output is as a vector containung 4 values that are from 0-1. With each value representing a direction: [up, down, left, right].
-            original_output, self.h0, self.c0 = self.model(X, self.h0, self.c0)
+            original_output, self.h0, self.c0 = self.model(self.memory, self.h0, self.c0)
             original_output = original_output.squeeze(0)
             output = torch.sigmoid(original_output).to("cpu")
             output = (output > 0.5)
             self.directional_vector = output
+            self.memory = self.memory.to("cpu")
+            # print(f"Original Output: {original_output}\nOutput: {output}")
 
         if (self.directional_vector[0]):
             self.dy -= ACCELERATION
@@ -284,10 +309,10 @@ class AI(Object):
         if (self.directional_vector[3]):
             self.dx += ACCELERATION
 
+        self.check_bounds()
         self.apply_friction()
         self.check_max_velocity()        
         self.move()
-        self.check_bounds()
         if changed:
             self.train_ai(original_output)
         self.glue_value = 0
@@ -375,8 +400,10 @@ class LSTM(nn.Module):
         return loss
 
     def forward(self, x, h0, c0):
-        # Input tensor idea: [aix, aiy, dx, dy, player_x, player_y, glue_x1, glue_y1, glue_x2, glue_y2, ...]
+        # Input tensor ideas: sequence = [aix, aiy, dx, dy, player_x, player_y, glue_x1, glue_y1, glue_x2, glue_y2, ...]
         # where dx and dy are the player's velocity, player_x and player_y are the player's position,
+        # Input_Tensor = [NUM_SAVED_FRAMES, sequence length]. Where there will be NUM_SAVED_FRAMES amount of sequances in the tensor.
+        # The sequences include the current frame plus the last NUM_SAVED_FRAMES-1 frames.
 
         if (h0 is None):
             h0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
@@ -384,7 +411,7 @@ class LSTM(nn.Module):
             c0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
         
         x, (h0, c0) = self.lstm(x, (h0, c0))
-        x = self.output_layer(x)
+        x = self.output_layer(x[-1])
         
         h0 = h0.detach()
         c0 = c0.detach()
@@ -401,12 +428,15 @@ def load_model(model, txt_file):
         number = lines[1]
         if line.startswith("model"):
             line = line.strip("\n")
-            model.load_state_dict(torch.load(SAVE_FILE + line))
+            try:
+                model.load_state_dict(torch.load(SAVE_FILE + line))
+            except Exception:
+                print("Model cannot be loaded. Creating a new one.")
             print("Model loaded successfully.")
             try:
                 model_number = int(number)
             except ValueError:
-                print("Model number not found. Starting with a new model.")
+                print("Model number not found. Starting with a new model number.")
                 model_number = 0
             return model, model_number
         else:
@@ -416,7 +446,7 @@ def load_model(model, txt_file):
 def save_model(model, model_number, text_file):
     # Saves the model to a file.
     torch.save(model.state_dict(), SAVE_FILE + "model_" +str(model_number) + ".pth")
-    with open(text_file, "w") as f:
+    with open(text_file, "a") as f:
         f.write(f"model_{model_number}.pth\n" + str(model_number))
     print(f"Model {model_number} saved successfully.")
 
@@ -439,6 +469,7 @@ def draw_game(objects, glues):
 
 
 def main():
+    sys.setrecursionlimit(100000)
     running = True
     clock = pygame.time.Clock()
     player = Player(WINDOW_X/2-PLAYER_DIM/2, WINDOW_Y/2-PLAYER_DIM/2, PLAYER_DIM, PLAYER_DIM, window, WHITE)
@@ -448,8 +479,9 @@ def main():
     for _ in range(GLUES):
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
-    model = LSTM(NUM_LAYERS, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
+    model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
     model, model_number = load_model(model, TEXT_FILE)
+    
     for _ in range(NUM_AI_OBJECTS):
         ai = AI(random.randint(0, WINDOW_X-PLAYER_DIM), random.randint(0, WINDOW_Y-PLAYER_DIM), PLAYER_DIM, PLAYER_DIM, window, RED, model, player)
         objects.append(ai)
@@ -475,13 +507,14 @@ def main():
 
         for glue in glues:
             glue.check_for_collisions(objects, pygame.time.get_ticks())
+            glue.check_bounds()
             glue.apply_friction()
             if (pygame.time.get_ticks() - glue.movement_timer >= GLUE_MOVEMENT_TIME):
                 glue.random_move()
                 glue.movement_timer = pygame.time.get_ticks()
             else:
                 glue.move()
-                glue.check_bounds()
+                # glue.check_bounds()
 
         for obj in objects:
             if isinstance(obj, Player):
