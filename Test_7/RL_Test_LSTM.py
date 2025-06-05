@@ -16,7 +16,7 @@ GLUE_DIM = 75
 GLUES = 10
 GLUE_MOVEMENT_TIME = 5000
 
-# Other object contsants (player + AI objects)
+# Other object constants (player + AI objects)
 ACCELERATION = 1
 FRICTION = 0.5
 MAX_VELOCITY = 15
@@ -30,8 +30,8 @@ HIDDEN_SIZE = 128
 OUTPUT_SIZE = 4
 SAVE_FILE = "Models/LSTM_Models/"
 TEXT_FILE = SAVE_FILE + "current_model.txt"
-LEARNING_RATE = 0.0000001
-AI_FORWARD_TIME = 1000/10 # The AI object will change its directional vector 60 times each second thanks to this variable, this will be used for testing later
+LEARNING_RATE = 0.000001
+AI_FORWARD_TIME = 1000/40 # The AI object will change its directional vector 15 times each second thanks to this variable, this will be used for testing later
 NUM_AI_OBJECTS = 5
 NUM_SAVED_FRAMES = 60
 SEQUENCE_LENGTH = 4 + 2 * GLUES
@@ -366,6 +366,9 @@ class LSTM(nn.Module):
     def __init__(self, num_layers, input_size, hidden_size, output_size):
         super(LSTM, self).__init__()
 
+        # Equation which will used to calculate the loss of the AI. Its a linear line with a very small exponential curve.
+        self.loss_equation = lambda distance_difference, window : distance_difference/window + (1.01)**(distance_difference/10)
+
         self.num_layers = num_layers
         self.hidden_size = hidden_size
 
@@ -377,20 +380,20 @@ class LSTM(nn.Module):
 
         ai_x, ai_y = ai.get_center()
         player_x, player_y = player.get_center()
-        loss_x = abs(player_x - ai_x)/WINDOW_X
-        loss_y = abs(player_y - ai_y)/WINDOW_Y
+        loss_x = self.loss_equation(abs(ai_x - player_x), WINDOW_X)
+        loss_y = self.loss_equation(abs(ai_y - player_y), WINDOW_Y)
         loss = (loss_x + loss_y)/2
         loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device).to(device)
         if glue_value > 0:
             loss *= glue_value
             proper_direction_x = False
             proper_direction_y = False
-        
+        '''
         if proper_direction_x:
             loss /= 2
         if proper_direction_y:
             loss /= 2
-        '''
+        
         if proper_direction_x and proper_direction_y:
             loss = 0
         '''
