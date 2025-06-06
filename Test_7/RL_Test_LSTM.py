@@ -361,7 +361,7 @@ class AI(Object):
 
 
 class LSTM(nn.Module):
-    # We will be using an LSTM model in this expiriment. This LSTM will control the AI objects.
+    # We will be using an LSTM model in this experiment. This LSTM will control the AI objects.
 
     def __init__(self, num_layers, input_size, hidden_size, output_size):
         super(LSTM, self).__init__()
