@@ -305,6 +305,22 @@ class AI(Object):
             self.timer = current_time
             self.player.health -= 2
 
+    def moving_into_wall(self, x_axis):
+        # Checks if the AI is moving into a wall. If it is, it returns True.
+
+        if x_axis:
+            if self.dx > 0 and self.hitbox.x + self.width >= WINDOW_X - 5:
+                return True
+            elif self.dx < 0 and self.hitbox.x <= 5:
+                return True
+        else:
+            if self.dy > 0 and self.hitbox.y + self.height >= WINDOW_Y - 5:
+                return True
+            elif self.dy < 0 and self.hitbox.y <= 5:
+                return True
+        
+        return False
+
 
 class SimpleNeuralNetwork(nn.Module):
     # A simple neural network which will control an object which will hunt the player.
@@ -322,23 +338,47 @@ class SimpleNeuralNetwork(nn.Module):
         self.output_layer = nn.Linear(hidden_size, output_size)
 
     def calculate_loss(self, player, ai, glue_value, output, proper_direction_x, proper_direction_y):
+        
+        # Convert positions to tensors FIRST (maintaining gradients if needed)
         ai_x, ai_y = ai.get_center()
         player_x, player_y = player.get_center()
-        loss_x = abs(player_x - ai_x)/WINDOW_X
-        loss_y = abs(player_y - ai_y)/WINDOW_Y
-        loss = (loss_x + loss_y)/2
+
+        ai_pos = torch.tensor([ai_x, ai_y], dtype=torch.float32, device=output.device)
+        player_pos = torch.tensor([player_x, player_y], dtype=torch.float32, device=output.device)
+        
+        # Calculate distances using tensor operations
+        distance_x = torch.abs(ai_pos[0] - player_pos[0])
+        distance_y = torch.abs(ai_pos[1] - player_pos[1])
+
+        loss_x = distance_x / WINDOW_X + torch.pow(torch.tensor(1.01, device=output.device), distance_x / 10)
+        loss_y = distance_y / WINDOW_Y + torch.pow(torch.tensor(1.01, device=output.device), distance_y / 10)
+        loss = (loss_x + loss_y) / 2
+
+        # Apply Glue penalty
         if glue_value > 0:
-            loss *= glue_value
+            glue_tensor = torch.tensor(glue_value, dtype=torch.float32, device=output.device)
+            loss = loss * glue_tensor
             proper_direction_x = False
             proper_direction_y = False
+
+        # Reward the AI for moving in the proper direction towards the player.
         if proper_direction_x:
-            loss /= 5
+            loss = loss * 0.5
         if proper_direction_y:
-            loss /= 5
-        if proper_direction_x and proper_direction_y:
-            loss = 0
-        loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device)
-        loss = torch.mean((abs((abs(output) + (loss*100))/100)**2)*2)
+            loss = loss * 0.5
+
+        # Add penalty for the AI moving into a wall.
+        if ai.moving_into_wall(True):
+            loss = loss * 2
+        if ai.moving_into_wall(False):
+            loss = loss * 2
+        
+        output_penalty = torch.mean(output**2) * 0.01
+        loss = loss + output_penalty
+        
+        # Final transformation
+        loss = 2 * loss**2
+        
         return loss
 
     def forward(self, x):
@@ -468,3 +508,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ main()
