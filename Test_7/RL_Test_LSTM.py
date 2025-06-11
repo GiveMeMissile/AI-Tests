@@ -393,7 +393,6 @@ class LSTM(nn.Module):
         self.output_layer = nn.Linear(hidden_size, output_size)
         
     def calculate_loss(self, player, ai, glue_value, output, proper_direction_x, proper_direction_y):
-        """This version maintains gradient flow - USE THIS"""
         
         # Convert positions to tensors FIRST (maintaining gradients if needed)
         ai_x, ai_y = ai.get_center()
@@ -409,7 +408,8 @@ class LSTM(nn.Module):
         loss_x = distance_x / WINDOW_X + torch.pow(torch.tensor(1.01, device=output.device), distance_x / 10)
         loss_y = distance_y / WINDOW_Y + torch.pow(torch.tensor(1.01, device=output.device), distance_y / 10)
         loss = (loss_x + loss_y) / 2
-    
+
+        # Apply Glue penalty
         if glue_value > 0:
             glue_tensor = torch.tensor(glue_value, dtype=torch.float32, device=output.device)
             loss = loss * glue_tensor
