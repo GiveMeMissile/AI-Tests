@@ -271,21 +271,21 @@ class AI(Object):
             x, y = self.player.get_center()
             x_ai, y_ai = self.get_center()
             X = torch.tensor([
-                x_ai, 
-                y_ai,
-                self.dx,
-                self.dy,
-                x, 
-                y,
-                self.player.dx,
-                self.player.dy
+                x_ai/WINDOW_X, 
+                y_ai/WINDOW_Y,
+                self.dx/MAX_VELOCITY,
+                self.dy/MAX_VELOCITY,
+                x/WINDOW_X, 
+                y/WINDOW_X,
+                self.player.dx/MAX_VELOCITY,
+                self.player.dy/MAX_VELOCITY
                 ], dtype=torch.float32).to(device)
             
             list_glues_location = []
             for glue in glues:
                 x_glue, y_glue = glue.get_center()
-                list_glues_location.append(x_glue)
-                list_glues_location.append(y_glue)
+                list_glues_location.append(x_glue/WINDOW_X)
+                list_glues_location.append(y_glue/WINDOW_Y)
 
             glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
             X = torch.cat((X, glue_tensor), dim=0)
@@ -363,6 +363,22 @@ class AI(Object):
             self.timer = current_time
             self.player.health -= 2
 
+    def moving_into_wall(self, x_axis):
+        # Checks if the AI is moving into a wall. If it is, it returns True.
+
+        if x_axis:
+            if self.dx > 0 and self.hitbox.x + self.width >= WINDOW_X - 5:
+                return True
+            elif self.dx < 0 and self.hitbox.x <= 5:
+                return True
+        else:
+            if self.dy > 0 and self.hitbox.y + self.height >= WINDOW_Y - 5:
+                return True
+            elif self.dy < 0 and self.hitbox.y <= 5:
+                return True
+        
+        return False
+
 
 class LSTM(nn.Module):
     # We will be using an LSTM model in this experiment. This LSTM will control the AI objects.
@@ -399,6 +415,18 @@ class LSTM(nn.Module):
             loss = loss * glue_tensor
             proper_direction_x = False
             proper_direction_y = False
+
+        # Reward the AI for moving in the proper direction towards the player.
+        if proper_direction_x:
+            loss = loss * 0.5
+        if proper_direction_y:
+            loss = loss * 0.5
+
+        # Add penalty for the AI moving into a wall.
+        if ai.moving_into_wall(True):
+            loss = loss * 2
+        if ai.moving_into_wall(False):
+            loss = loss * 2
         
         output_penalty = torch.mean(output**2) * 0.01
         loss = loss + output_penalty
