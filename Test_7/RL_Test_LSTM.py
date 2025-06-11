@@ -30,11 +30,11 @@ HIDDEN_SIZE = 128
 OUTPUT_SIZE = 4
 SAVE_FILE = "Models/LSTM_Models/"
 TEXT_FILE = SAVE_FILE + "current_model.txt"
-LEARNING_RATE = 0.000001
+LEARNING_RATE = 0.0001
 AI_FORWARD_TIME = 1000/40 # The AI object will change its directional vector 15 times each second thanks to this variable, this will be used for testing later
 NUM_AI_OBJECTS = 5
 NUM_SAVED_FRAMES = 60
-SEQUENCE_LENGTH = 4 + 2 * GLUES
+SEQUENCE_LENGTH = 8 + 2 * GLUES
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -273,8 +273,12 @@ class AI(Object):
             X = torch.tensor([
                 x_ai, 
                 y_ai,
+                self.dx,
+                self.dy,
                 x, 
-                y
+                y,
+                self.player.dx,
+                self.player.dy
                 ], dtype=torch.float32).to(device)
             
             list_glues_location = []
@@ -366,9 +370,6 @@ class LSTM(nn.Module):
     def __init__(self, num_layers, input_size, hidden_size, output_size):
         super(LSTM, self).__init__()
 
-        # Equation which will used to calculate the loss of the AI. Its a linear line with a very small exponential curve.
-        self.loss_equation = lambda distance_difference, window : distance_difference/window + (1.01)**(distance_difference/10)
-
         self.num_layers = num_layers
         self.hidden_size = hidden_size
 
@@ -376,30 +377,35 @@ class LSTM(nn.Module):
         self.output_layer = nn.Linear(hidden_size, output_size)
         
     def calculate_loss(self, player, ai, glue_value, output, proper_direction_x, proper_direction_y):
-        # Will change this loss function later for better results, but for now this will do for now.
-
+        """This version maintains gradient flow - USE THIS"""
+        
+        # Convert positions to tensors FIRST (maintaining gradients if needed)
         ai_x, ai_y = ai.get_center()
         player_x, player_y = player.get_center()
-        loss_x = self.loss_equation(abs(ai_x - player_x), WINDOW_X)
-        loss_y = self.loss_equation(abs(ai_y - player_y), WINDOW_Y)
-        loss = (loss_x + loss_y)/2
-        loss = torch.tensor(loss, dtype=torch.float32, requires_grad=True).to(device).to(device)
+
+        ai_pos = torch.tensor([ai_x, ai_y], dtype=torch.float32, device=output.device)
+        player_pos = torch.tensor([player_x, player_y], dtype=torch.float32, device=output.device)
+        
+        # Calculate distances using tensor operations
+        distance_x = torch.abs(ai_pos[0] - player_pos[0])
+        distance_y = torch.abs(ai_pos[1] - player_pos[1])
+
+        loss_x = distance_x / WINDOW_X + torch.pow(torch.tensor(1.01, device=output.device), distance_x / 10)
+        loss_y = distance_y / WINDOW_Y + torch.pow(torch.tensor(1.01, device=output.device), distance_y / 10)
+        loss = (loss_x + loss_y) / 2
+    
         if glue_value > 0:
-            loss *= glue_value
+            glue_tensor = torch.tensor(glue_value, dtype=torch.float32, device=output.device)
+            loss = loss * glue_tensor
             proper_direction_x = False
             proper_direction_y = False
-        '''
-        if proper_direction_x:
-            loss /= 2
-        if proper_direction_y:
-            loss /= 2
         
-        if proper_direction_x and proper_direction_y:
-            loss = 0
-        '''
-        output = torch.mean(output**2) * .01
-        loss = loss + output
-        loss = 2*loss**2
+        output_penalty = torch.mean(output**2) * 0.01
+        loss = loss + output_penalty
+        
+        # Final transformation
+        loss = 2 * loss**2
+        
         return loss
 
     def forward(self, x, h0, c0):
