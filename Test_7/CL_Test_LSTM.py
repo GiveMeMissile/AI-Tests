@@ -511,7 +511,7 @@ def draw_game(objects, glues, time):
         glue.display()
 
     try: 
-        text = font.render(f"Health: {objects[0].health}\nTime Remaining: {round((TIME_LIMIT - time)/1000)}", True, WHITE)
+        text = font.render(f"Health: {objects[0].health}    |    Time Remaining: {round((TIME_LIMIT - time)/1000)}", True, WHITE)
     except Exception:
         text = font.render("Health: 0", True, WHITE)
     window.blit(text, (10, 10))
@@ -548,7 +548,6 @@ def main():
                     running = False
                 elif event.key == pygame.K_LSHIFT:
                     player.override = not player.override
-
 
         if pygame.time.get_ticks()-previous_time >= TIME_LIMIT:
             game_end(model, model_number)
