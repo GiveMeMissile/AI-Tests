@@ -5,6 +5,7 @@ from torch import nn
 
 # Game constants
 WINDOW_X, WINDOW_Y = 1500, 750
+TIME_LIMIT = 60000
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 YELLOW = (255, 255, 0)
@@ -35,6 +36,7 @@ NUM_AI_OBJECTS = 10
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
+previous_time = 0
 pygame.init()
 pygame.font.init()
 font = pygame.font.SysFont("New Roman", 30)
@@ -413,7 +415,8 @@ def load_model(model, txt_file):
         else:
             print("Model not found. Starting with a new model.")
             return model, 0
-        
+
+
 def save_model(model, model_number, text_file):
     # Saves the model to a file.
     torch.save(model.state_dict(), SAVE_FILE + "model_" +str(model_number+1) + ".pth")
@@ -422,7 +425,18 @@ def save_model(model, model_number, text_file):
     print(f"Model {model_number} saved successfully.")
 
 
-def draw_game(objects, glues):
+def game_end(model, model_number):
+    global previous_time
+
+    try:
+        save_model(model, model_number, TEXT_FILE)
+        previous_time = pygame.time.get_ticks()
+        main()
+    except RecursionError:
+        print("RecursionError: Too many recursions. Program will now exit.")
+
+
+def draw_game(objects, glues, time):
     # Draws the game on the window. Quite self explanatory.
     window.fill(BLACK)
 
@@ -432,7 +446,7 @@ def draw_game(objects, glues):
         glue.display()
 
     try: 
-        text = font.render(f"Health: {objects[0].health}", True, WHITE)
+        text = font.render(f"Health: {objects[0].health}    |   Time Remaining: {round((TIME_LIMIT - time)/1000)}", True, WHITE)
     except Exception:
         text = font.render("Health: 0", True, WHITE)
     window.blit(text, (10, 10))
@@ -463,15 +477,14 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     # Reset the game if the space key is pressed.
-                    try:
-                        save_model(model, model_number, TEXT_FILE)
-                        main()
-                    except RecursionError:
-                        running = False
-                        print("RecursionError: Too many recursions. Program will now exit.")
+                    game_end(model, model_number)
+                    running = False
                 elif event.key == pygame.K_LSHIFT:
                     player.override = not player.override
 
+        if pygame.time.get_ticks()-previous_time >= TIME_LIMIT:
+            game_end(model, model_number)
+            running = False
 
         for glue in glues:
             glue.check_for_collisions(objects, pygame.time.get_ticks())
@@ -488,17 +501,13 @@ def main():
                 obj.player_move()
                 obj.random_move()
                 if obj.health <= 0:
-                    try:
-                        save_model(model, model_number, TEXT_FILE)
-                        main()
-                    except RecursionError:
-                        running = False
-                        print("RecursionError: Too many recursions. Program will now exit.")
+                    game_end(model, model_number)
+                    running = False
             if isinstance(obj, AI):
                 obj.ai_move(glues)
                 obj.check_for_collisions(pygame.time.get_ticks())
             obj.in_glue = False
-        draw_game(objects, glues)
+        draw_game(objects, glues, pygame.time.get_ticks()-previous_time)
         clock.tick(60)
 
 
@@ -508,4 +517,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- main()
