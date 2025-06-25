@@ -1,5 +1,6 @@
 import torch
 import sys
+import os
 import pygame
 import random
 from torch import nn
@@ -14,7 +15,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 10
+GLUES = 0
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -29,13 +30,14 @@ RANDOM_MOVE = True
 NUM_LAYERS = 4
 HIDDEN_SIZE = 128
 OUTPUT_SIZE = 4
-SAVE_FILE = "Models/LSTM_Models/"
-TEXT_FILE = SAVE_FILE + "current_model.txt"
+SAVE_FOLDER = "CL_LSTM_Models"
+TEXT_FILE = SAVE_FOLDER + "/" +"model_names.txt"
 LEARNING_RATE = 0.0001
 AI_FORWARD_TIME = 1000/40 # The AI object will change its directional vector 15 times each second thanks to this variable, this will be used for testing later
 NUM_AI_OBJECTS = 5
 NUM_SAVED_FRAMES = 60
 SEQUENCE_LENGTH = 8 + 2 * GLUES
+INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -162,7 +164,6 @@ class Glue(Object):
         elif dy < 0:
             dy -= self.glue_drag * dy
         
-
         return dx, dy
     
     def calculate_glue_value(self, obj):
@@ -460,41 +461,43 @@ class LSTM(nn.Module):
         return x, h0, c0
 
 
-def load_model(model, txt_file):
-    with open(txt_file, "r") as f:
+def check_for_folder():
+    if not os.path.isdir(SAVE_FOLDER):
+        os.mkdir(SAVE_FOLDER)
+    if not os.path.isfile(TEXT_FILE):
+        open(TEXT_FILE, "x")
+
+
+def load_model(model):
+    # This function checks if one of the saved models can be loaded, and if it can the function will load the model.
+    # If not the function will create a new model and save its input shape so it can be saved and used in the future.
+
+    # Check if model exists
+    with open(TEXT_FILE, "r") as f:
         lines = f.readlines()
-        line = str(lines[0])
-        number = lines[1]
-        if line.startswith("model"):
-            line = line.strip("\n")
-            try:
-                model.load_state_dict(torch.load(SAVE_FILE + line))
-            except Exception:
-                print("Model cannot be loaded. Creating a new one.")
-            print("Model loaded successfully.")
-            try:
-                model_number = int(number)
-            except ValueError:
-                print("Model number not found. Starting with a new model number.")
-                model_number = 0
-            return model, model_number
-        else:
-            print("Model not found. Starting with a new model.")
-            return model, 0
+        for line in lines:
+            split = line.split()
+            if (int(split[0]) == INPUT_SHAPE[0]) and (int(split[1]) == INPUT_SHAPE[1]):
+                model.load_state_dict(torch.load(SAVE_FOLDER + "/" + "model" + "_" + split[0] + "_" + split[1] + ".pth"))
+                return model
+    
+    # If model does not exist save the new model to the txt file.
+    with open(TEXT_FILE, "a") as f:
+        f.write(f"{INPUT_SHAPE[0]} {INPUT_SHAPE[1]}\n")
+        return model
         
-def save_model(model, model_number, text_file):
-    # Saves the model to a file.
-    torch.save(model.state_dict(), SAVE_FILE + "model_" +str(model_number) + ".pth")
-    with open(text_file, "a") as f:
-        f.write(f"model_{model_number}.pth\n" + str(model_number))
-    print(f"Model {model_number} saved successfully.")
+
+def save_model(model):
+    # Saves the model 
+    torch.save(model.state_dict(), SAVE_FOLDER + "/" + "model_" + str(INPUT_SHAPE[0]) + "_" + str(INPUT_SHAPE[1]) + ".pth")
+    print(f"Model {INPUT_SHAPE} saved successfully.")
 
 
-def game_end(model, model_number):
+def game_end(model):
     global previous_time
 
     try:
-        save_model(model, model_number, TEXT_FILE)
+        save_model(model)
         previous_time = pygame.time.get_ticks()
         main()
     except RecursionError:
@@ -530,7 +533,7 @@ def main():
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
     model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
-    model, model_number = load_model(model, TEXT_FILE)
+    model = load_model(model)
     
     for _ in range(NUM_AI_OBJECTS):
         ai = AI(random.randint(0, WINDOW_X-PLAYER_DIM), random.randint(0, WINDOW_Y-PLAYER_DIM), PLAYER_DIM, PLAYER_DIM, window, RED, model, player)
@@ -544,13 +547,13 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     # Reset the game if the space key is pressed.
-                    game_end(model, model_number)
+                    game_end(model)
                     running = False
                 elif event.key == pygame.K_LSHIFT:
                     player.override = not player.override
 
         if pygame.time.get_ticks()-previous_time >= TIME_LIMIT:
-            game_end(model, model_number)
+            game_end(model)
             running = False
 
         for glue in glues:
@@ -569,7 +572,7 @@ def main():
                 obj.player_move()
                 obj.random_move()
                 if obj.health <= 0:
-                    game_end(model, model_number)
+                    game_end(model)
                     running = False
             if isinstance(obj, AI):
                 obj.ai_move(glues, pygame.time.get_ticks())
@@ -579,9 +582,10 @@ def main():
         clock.tick(60)
 
 
-    save_model(model, model_number, TEXT_FILE)
+    save_model(model)
     pygame.quit()
 
 
 if __name__ == "__main__":
+    check_for_folder()
     main()
