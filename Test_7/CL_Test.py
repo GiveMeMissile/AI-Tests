@@ -1,6 +1,8 @@
 import torch
 import pygame
 import random
+import os
+import sys
 from torch import nn
 
 # Game constants
@@ -13,7 +15,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 10
+GLUES = 5
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object contsants (player + AI objects)
@@ -26,13 +28,13 @@ RANDOM_MOVE = False
 
 # AI Constants
 NUM_LAYERS = 4
-INPUT_SIZE = 4 + 2 * GLUES
+INPUT_SHAPE = 8 + 2 * GLUES
 HIDDEN_SIZE = 128
 OUTPUT_SIZE = 4
-SAVE_FILE = "Models/Simple_Models/"
-TEXT_FILE = SAVE_FILE + "current_model.txt"
+SAVE_FOLDER = "CL_Linear_Models"
+TEXT_FILE = SAVE_FOLDER + "/" +"model_numbers.txt"
 LEARNING_RATE = 0.00001
-NUM_AI_OBJECTS = 10
+NUM_AI_OBJECTS = 5
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
@@ -232,8 +234,12 @@ class AI(Object):
         X = torch.tensor([
             x_ai, 
             y_ai,
+            self.dx,
+            self.dy,
             x, 
-            y
+            y,
+            self.player.dx,
+            self.player.dy
             ], dtype=torch.float32).to(device)
         
         list_glues_location = []
@@ -397,39 +403,44 @@ class SimpleNeuralNetwork(nn.Module):
         return x
 
 
-def load_model(model, txt_file):
-    with open(txt_file, "r") as f:
+def check_for_folder():
+    if not os.path.isdir(SAVE_FOLDER):
+        os.mkdir(SAVE_FOLDER)
+    if not os.path.isfile(TEXT_FILE):
+        open(TEXT_FILE, "x")
+
+
+def load_model(model):
+    # This function checks if one of the saved models can be loaded, and if it can the function will load the model.
+    # If not the function will create a new model and save its input shape so it can be saved and used in the future.
+
+    # Check if model exists
+    with open(TEXT_FILE, "r") as f:
         lines = f.readlines()
-        line = str(lines[0])
-        number = lines[1]
-        if line.startswith("model"):
-            line = line.strip("\n")
-            model.load_state_dict(torch.load(SAVE_FILE + line))
-            print("Model loaded successfully.")
-            try:
-                model_number = int(number)
-            except ValueError:
-                print("Model number not found. Starting with a new model.")
-                model_number = 0
-            return model, model_number
-        else:
-            print("Model not found. Starting with a new model.")
-            return model, 0
+        for line in lines:
+            if (int(line) == INPUT_SHAPE):
+                model.load_state_dict(torch.load(SAVE_FOLDER + "/" + "model" + "_" + str(INPUT_SHAPE) + ".pth"))
+                print(f"Loaded model_{INPUT_SHAPE} successfully.")
+                return model
+    
+    # If model does not exist save the new model to the txt file.
+    with open(TEXT_FILE, "a") as f:
+        f.write(f"{INPUT_SHAPE}\n")
+        print(f"model_{INPUT_SHAPE} does not exist and thus cannot be found. Now creating a new model")
+        return model
 
 
-def save_model(model, model_number, text_file):
-    # Saves the model to a file.
-    torch.save(model.state_dict(), SAVE_FILE + "model_" +str(model_number+1) + ".pth")
-    with open(text_file, "w") as f:
-        f.write(f"model_{model_number+1}.pth\n" + str(model_number+1))
-    print(f"Model {model_number} saved successfully.")
+def save_model(model):
+    # Saves the model 
+    torch.save(model.state_dict(), SAVE_FOLDER + "/" + "model_" + str(INPUT_SHAPE) + ".pth")
+    print(f"Model {INPUT_SHAPE} saved successfully.")
 
 
-def game_end(model, model_number):
+def game_end(model):
     global previous_time
 
     try:
-        save_model(model, model_number, TEXT_FILE)
+        save_model(model)
         previous_time = pygame.time.get_ticks()
         main()
     except RecursionError:
@@ -454,6 +465,7 @@ def draw_game(objects, glues, time):
 
 
 def main():
+    sys.setrecursionlimit(100000)
     running = True
     clock = pygame.time.Clock()
     player = Player(WINDOW_X/2-PLAYER_DIM/2, WINDOW_Y/2-PLAYER_DIM/2, PLAYER_DIM, PLAYER_DIM, window, WHITE)
@@ -463,8 +475,9 @@ def main():
     for _ in range(GLUES):
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
-    model = SimpleNeuralNetwork(NUM_LAYERS, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
-    model, model_number = load_model(model, TEXT_FILE)
+    model = SimpleNeuralNetwork(NUM_LAYERS, INPUT_SHAPE, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
+    model = load_model(model)
+
     for _ in range(NUM_AI_OBJECTS):
         ai = AI(random.randint(0, WINDOW_X-PLAYER_DIM), random.randint(0, WINDOW_Y-PLAYER_DIM), PLAYER_DIM, PLAYER_DIM, window, RED, model, player)
         objects.append(ai)
@@ -477,13 +490,13 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     # Reset the game if the space key is pressed.
-                    game_end(model, model_number)
+                    game_end(model)
                     running = False
                 elif event.key == pygame.K_LSHIFT:
                     player.override = not player.override
 
         if pygame.time.get_ticks()-previous_time >= TIME_LIMIT:
-            game_end(model, model_number)
+            game_end(model)
             running = False
 
         for glue in glues:
@@ -501,7 +514,7 @@ def main():
                 obj.player_move()
                 obj.random_move()
                 if obj.health <= 0:
-                    game_end(model, model_number)
+                    game_end(model)
                     running = False
             if isinstance(obj, AI):
                 obj.ai_move(glues)
@@ -511,9 +524,10 @@ def main():
         clock.tick(60)
 
 
-    save_model(model, model_number, TEXT_FILE)
+    save_model(model)
     pygame.quit()
 
 
 if __name__ == "__main__":
+    check_for_folder()
     main()
