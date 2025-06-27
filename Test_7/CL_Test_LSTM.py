@@ -1,3 +1,5 @@
+# Todo: Fix the automated movement not working when in glues.
+
 import torch
 import sys
 import os
@@ -15,7 +17,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 0
+GLUES = 10
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -31,10 +33,10 @@ NUM_LAYERS = 4
 HIDDEN_SIZE = 128
 OUTPUT_SIZE = 4
 SAVE_FOLDER = "CL_LSTM_Models"
-TEXT_FILE = SAVE_FOLDER + "/" +"model_names.txt"
+TEXT_FILE = SAVE_FOLDER + "/" +"model_numbers.txt"
 LEARNING_RATE = 0.0001
 AI_FORWARD_TIME = 1000/40 # The AI object will change its directional vector 15 times each second thanks to this variable, this will be used for testing later
-NUM_AI_OBJECTS = 5
+NUM_AI_OBJECTS = 1
 NUM_SAVED_FRAMES = 60
 SEQUENCE_LENGTH = 8 + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
@@ -59,7 +61,6 @@ class Object:
         self.dy = 0
         self.color = color
         self.window = window
-        self.override = not RANDOM_MOVE
         self.amplifier = 1
 
     def display(self):
@@ -100,8 +101,6 @@ class Object:
             self.hitbox.y -= 100
 
     def random_move(self):
-        if self.override:
-            return
         # Randomly moves the object in a random direction. This is used for testing purposes.
         self.dx += random.randint(-1, 1) * ACCELERATION * self.amplifier
         self.dy += random.randint(-1, 1) * ACCELERATION * self.amplifier
@@ -149,7 +148,6 @@ class Glue(Object):
         self.glue_drag = 0.5
         self.amplifier = 10
         self.movement_timer = 0
-        self.override = False
 
     def alter_velocity(self, dx, dy):
         # This function is used to alter the velocity of the object when it collides with the glue.
@@ -206,6 +204,9 @@ class Glue(Object):
                 
                 if not isinstance(obj, Player):
                     continue
+                obj.in_glue = True
+                obj.glues.append(self)
+
                 # Damages the player for colliding with glue.
                 if current_time - self.timer >= DAMAGE_COOLDOWN:
                     obj.health -= 1
@@ -215,7 +216,10 @@ class Glue(Object):
 class Player(Object):
     def __init__(self, x, y, width, height, window, color):
         super().__init__(x, y, width, height, window, color)
+        self.override = not RANDOM_MOVE
         self.health = 30
+        self.in_glue = False
+        self.glues = []
 
     def player_move(self):
         # Player movement using WASD keys. The player can move in all directions and has a maximum velocity.
@@ -235,10 +239,46 @@ class Player(Object):
             self.dx += ACCELERATION
             self.override = True
         
-        self.check_bounds()
         self.apply_friction()
         self.check_max_velocity()
+
+        if self.override:
+            self.move()
+            self.check_bounds()
+            return
+
+        if not self.in_glue:
+            self.random_move()
+            return
+        
+        avg_x, avg_y = self.get_glues_average()
+        x, y = self.location()
+        if avg_x < x:
+            self.dx += ACCELERATION
+        else:
+            self.dx -= ACCELERATION
+
+        if avg_y < y:
+            self.dy += ACCELERATION
+        else:
+            self.dy -= ACCELERATION
+        
+        self.in_glue = False
+        self.glues.clear()
+
         self.move()
+        self.check_bounds()
+
+
+    def get_glues_average(self):
+        average_glue_x = 0
+        average_glue_y = 0
+        for glue in self.glues:
+            x, y = glue.location()
+            average_glue_x += x
+            average_glue_y += y
+
+        return average_glue_x/len(self.glues), average_glue_y/len(self.glues)
 
 
 class AI(Object):
@@ -274,14 +314,14 @@ class AI(Object):
             x, y = self.player.get_center()
             x_ai, y_ai = self.get_center()
             X = torch.tensor([
-                x_ai/WINDOW_X, 
-                y_ai/WINDOW_Y,
-                self.dx/MAX_VELOCITY,
-                self.dy/MAX_VELOCITY,
-                x/WINDOW_X, 
-                y/WINDOW_X,
-                self.player.dx/MAX_VELOCITY,
-                self.player.dy/MAX_VELOCITY
+                x_ai, 
+                y_ai,
+                self.dx,
+                self.dy,
+                x, 
+                y,
+                self.player.dx,
+                self.player.dy
                 ], dtype=torch.float32).to(device)
             
             list_glues_location = []
@@ -479,11 +519,13 @@ def load_model(model):
             split = line.split()
             if (int(split[0]) == INPUT_SHAPE[0]) and (int(split[1]) == INPUT_SHAPE[1]):
                 model.load_state_dict(torch.load(SAVE_FOLDER + "/" + "model" + "_" + split[0] + "_" + split[1] + ".pth"))
+                print(f"Loaded model_{INPUT_SHAPE} successfully.")
                 return model
     
     # If model does not exist save the new model to the txt file.
     with open(TEXT_FILE, "a") as f:
         f.write(f"{INPUT_SHAPE[0]} {INPUT_SHAPE[1]}\n")
+        print(f"model_{INPUT_SHAPE} does not exist and thus cannot be found. Now creating a new model")
         return model
         
 
@@ -570,7 +612,6 @@ def main():
         for obj in objects:
             if isinstance(obj, Player):
                 obj.player_move()
-                obj.random_move()
                 if obj.health <= 0:
                     game_end(model)
                     running = False
