@@ -25,6 +25,7 @@ MAX_VELOCITY = 15
 DAMAGE_COOLDOWN = 1000
 PLAYER_DIM = 50
 RANDOM_MOVE = False
+REMOVE_OBJ_TIME = 250
 
 # AI Constants
 NUM_LAYERS = 4
@@ -55,7 +56,6 @@ class Object:
         self.dy = 0
         self.color = color
         self.window = window
-        self.override = not RANDOM_MOVE
         self.amplifier = 1
 
     def display(self):
@@ -96,11 +96,9 @@ class Object:
             self.dy = -self.dy/2
 
     def random_move(self):
-        if self.override:
-            return
         # Randomly moves the object in a random direction. This is used for testing purposes.
-        self.dx = random.randint(-1, 1) * ACCELERATION * self.amplifier
-        self.dy = random.randint(-1, 1) * ACCELERATION * self.amplifier
+        self.dx += random.randint(-1, 1) * ACCELERATION * self.amplifier
+        self.dy += random.randint(-1, 1) * ACCELERATION * self.amplifier
         self.move()
         self.check_bounds()
 
@@ -113,6 +111,11 @@ class Object:
             self.dy -= FRICTION
         elif (self.dy < 0):
             self.dy += FRICTION
+
+        if self.dx < FRICTION and self.dx > -FRICTION:
+            self.dx = 0
+        if self.dy < FRICTION and self.dy > -FRICTION:
+            self.dy = 0
     
     def check_max_velocity(self):
         if self.dx > MAX_VELOCITY:
@@ -138,10 +141,10 @@ class Glue(Object):
         self.glue_drag = 0.5
         self.amplifier = 10
         self.movement_timer = 0
-        self.override = False
 
     def alter_velocity(self, dx, dy):
         # This function is used to alter the velocity of the object when it collides with the glue.
+
         if dx > 0:
             dx -= self.glue_drag * dx
         elif dx < 0:
@@ -160,7 +163,21 @@ class Glue(Object):
         obj_x, obj_y = obj.get_center()
         glue_x, glue_y = self.get_center()
         glue_value = ((self.width/2 + obj.width/2) - (abs(obj_x - glue_x))) + ((self.height + obj.height)/2 - (abs(obj_y - glue_y)))
-        glue_value = glue_value/(((self.width/2 + obj.width/2) + (self.height/2 + obj.height/2))/10) + 1
+        glue_value = glue_value/(((self.width/2 + obj.width/2) + (self.height/2 + obj.height/2))/10) + 1.5
+
+        if (obj.dx < 0 and obj.dy < 0) and (obj_x < glue_x and obj_y < glue_y):
+            return 0
+        if (obj.dx > 0 and obj.dy < 0) and (obj_x > glue_x and obj_y < glue_y):
+            return 0
+        if obj.dx > 0 and obj_x > glue_x:
+            glue_value /= 5
+        if obj.dx < 0 and obj_x < glue_x:
+            glue_value /= 5
+        if obj.dy > 0 and obj_y > glue_y:
+            glue_value /= 5
+        if obj.dy < 0 and obj_y < glue_y:
+            glue_value /= 5
+
         return glue_value
 
     def check_for_collisions(self, objects, current_time):
@@ -179,6 +196,10 @@ class Glue(Object):
                 
                 if not isinstance(obj, Player):
                     continue
+                obj.contacted_object = True
+                obj.objects.append(self)
+                obj.remove_objects_timer = current_time
+
                 # Damages the player for colliding with glue.
                 if current_time - self.timer >= DAMAGE_COOLDOWN:
                     obj.health -= 1
@@ -188,10 +209,13 @@ class Glue(Object):
 class Player(Object):
     def __init__(self, x, y, width, height, window, color):
         super().__init__(x, y, width, height, window, color)
+        self.override = not RANDOM_MOVE
         self.health = 30
-        self.amplifier = 2
+        self.contacted_object = False
+        self.objects = []
+        self.remove_objects_timer = 0
 
-    def player_move(self):
+    def player_move(self, current_time):
         # Player movement using WASD keys. The player can move in all directions and has a maximum velocity.
 
         keys = pygame.key.get_pressed()
@@ -209,11 +233,59 @@ class Player(Object):
             self.dx += ACCELERATION
             self.override = True
         
-
         self.apply_friction()
         self.check_max_velocity()
+
+        # If the player is controlling the square as known by self.override equaling true. 
+        # Then we simply move the object and check the boundries then return ending the function.
+        if self.override:
+            self.move()
+            self.check_bounds()
+            return
+
+        # If self.override = False and the player square has not collided with any objects.
+        # Then the square moves randomly via the random_move() function
+        if not self.contacted_object:
+            self.random_move()
+            return
+        
+        # If there is a collision with 1 or more objects then the player object will accelerate away from the object(s) which collided with it.
+        # This allows for better automated movement of the player square when it is not being controlled by the player.
+        avg_x, avg_y = self.get_objects_average()
+        x, y = self.location()
+        if avg_x < x:
+            self.dx += ACCELERATION
+        else:
+            self.dx -= ACCELERATION
+
+        if avg_y < y:
+            self.dy += ACCELERATION
+        else:
+            self.dy -= ACCELERATION
+
+        # This if statement below will make the player square continue to move away from the contacted objects
+        # for 1/4 of a second so the player square will make some distance between the object it collided with and itself.
+        if current_time - REMOVE_OBJ_TIME >= self.remove_objects_timer:
+            self.contacted_object = False
+            self.objects.clear()
+
+        # Calling the move() and check_bounds() functions if random_move() is not called.
         self.move()
         self.check_bounds()
+
+
+    def get_objects_average(self):
+        # This function returns the average x and y coords of the center of all collided objects.
+        # This will be utilized to decide the direction the player will move when it is collided with multiple objects.
+
+        average_obj_x = 0
+        average_obj_y = 0
+        for obj in self.objects:
+            x, y = obj.location()
+            average_obj_x += x
+            average_obj_y += y
+
+        return average_obj_x/len(self.objects), average_obj_y/len(self.objects)
 
 
 class AI(Object):
@@ -303,8 +375,16 @@ class AI(Object):
         self.optimizer.step()
 
     def check_for_collisions(self, current_time):
-        # check for collision between the AI and player and removes 5 health from the player if they collide.
-        if self.hitbox.colliderect(self.player.hitbox) and (current_time - self.timer >= DAMAGE_COOLDOWN):
+
+        if self.hitbox.colliderect(self.player.hitbox):
+            self.player.contacted_object = True
+            self.player.objects.append(self)
+            self.player.remove_objects_timer = current_time
+        else:
+            return
+        
+        # check for collision between the AI and player and removes 2 health from the player if they collide.
+        if (current_time - self.timer >= DAMAGE_COOLDOWN):
             old_player_dx, old_player_dy = self.player.dx, self.player.dy
             self.player.dx = self.dx/2
             self.player.dy = self.dy/2
@@ -484,6 +564,7 @@ def main():
 
     # Game loop, YIPPEEEEEEE
     while running:
+        current_time = pygame.time.get_ticks()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -495,32 +576,31 @@ def main():
                 elif event.key == pygame.K_LSHIFT:
                     player.override = not player.override
 
-        if pygame.time.get_ticks()-previous_time >= TIME_LIMIT:
+        if current_time-previous_time >= TIME_LIMIT:
             game_end(model)
             running = False
 
         for glue in glues:
-            glue.check_for_collisions(objects, pygame.time.get_ticks())
+            glue.check_for_collisions(objects, current_time)
             glue.apply_friction()
-            if (pygame.time.get_ticks() - glue.movement_timer >= GLUE_MOVEMENT_TIME):
+            if (current_time - glue.movement_timer >= GLUE_MOVEMENT_TIME):
                 glue.random_move()
-                glue.movement_timer = pygame.time.get_ticks()
+                glue.movement_timer = current_time
             else:
                 glue.move()
                 glue.check_bounds()
 
         for obj in objects:
             if isinstance(obj, Player):
-                obj.player_move()
-                obj.random_move()
+                obj.player_move(current_time)
                 if obj.health <= 0:
                     game_end(model)
                     running = False
             if isinstance(obj, AI):
                 obj.ai_move(glues)
-                obj.check_for_collisions(pygame.time.get_ticks())
+                obj.check_for_collisions(current_time)
             obj.in_glue = False
-        draw_game(objects, glues, pygame.time.get_ticks()-previous_time)
+        draw_game(objects, glues, current_time-previous_time)
         clock.tick(60)
 
 
