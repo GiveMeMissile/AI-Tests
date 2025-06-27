@@ -1,4 +1,7 @@
-# Todo: Fix the automated movement not working when in glues.
+# Todo: 
+# 1: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently.
+# 2: Change the saving method to be compatible with the changed made in #1. 
+# 3: Get happy.
 
 import torch
 import sys
@@ -17,7 +20,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 10
+GLUES = 30
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -27,6 +30,7 @@ MAX_VELOCITY = 15
 DAMAGE_COOLDOWN = 1000
 PLAYER_DIM = 50
 RANDOM_MOVE = True
+REMOVE_OBJ_TIME = 250
 
 # AI Constants
 NUM_LAYERS = 4
@@ -204,8 +208,9 @@ class Glue(Object):
                 
                 if not isinstance(obj, Player):
                     continue
-                obj.in_glue = True
-                obj.glues.append(self)
+                obj.contacted_object = True
+                obj.objects.append(self)
+                obj.remove_objects_timer = current_time
 
                 # Damages the player for colliding with glue.
                 if current_time - self.timer >= DAMAGE_COOLDOWN:
@@ -218,10 +223,11 @@ class Player(Object):
         super().__init__(x, y, width, height, window, color)
         self.override = not RANDOM_MOVE
         self.health = 30
-        self.in_glue = False
-        self.glues = []
+        self.contacted_object = False
+        self.objects = []
+        self.remove_objects_timer = 0
 
-    def player_move(self):
+    def player_move(self, current_time):
         # Player movement using WASD keys. The player can move in all directions and has a maximum velocity.
 
         keys = pygame.key.get_pressed()
@@ -247,11 +253,11 @@ class Player(Object):
             self.check_bounds()
             return
 
-        if not self.in_glue:
+        if not self.contacted_object:
             self.random_move()
             return
         
-        avg_x, avg_y = self.get_glues_average()
+        avg_x, avg_y = self.get_objects_average()
         x, y = self.location()
         if avg_x < x:
             self.dx += ACCELERATION
@@ -262,23 +268,24 @@ class Player(Object):
             self.dy += ACCELERATION
         else:
             self.dy -= ACCELERATION
-        
-        self.in_glue = False
-        self.glues.clear()
+
+        if current_time - REMOVE_OBJ_TIME >= self.remove_objects_timer:
+            self.contacted_object = False
+            self.objects.clear()
 
         self.move()
         self.check_bounds()
 
 
-    def get_glues_average(self):
-        average_glue_x = 0
-        average_glue_y = 0
-        for glue in self.glues:
-            x, y = glue.location()
-            average_glue_x += x
-            average_glue_y += y
+    def get_objects_average(self):
+        average_obj_x = 0
+        average_obj_y = 0
+        for obj in self.objects:
+            x, y = obj.location()
+            average_obj_x += x
+            average_obj_y += y
 
-        return average_glue_x/len(self.glues), average_glue_y/len(self.glues)
+        return average_obj_x/len(self.objects), average_obj_y/len(self.objects)
 
 
 class AI(Object):
@@ -397,7 +404,14 @@ class AI(Object):
 
     def check_for_collisions(self, current_time):
         # check for collision between the AI and player and removes 5 health from the player if they collide.
-        if self.hitbox.colliderect(self.player.hitbox) and (current_time - self.timer >= DAMAGE_COOLDOWN):
+        if self.hitbox.colliderect(self.player.hitbox):
+            self.player.contacted_object = True
+            self.player.objects.append(self)
+            self.player.remove_objects_timer = current_time
+        else:
+            return
+        
+        if (current_time - self.timer >= DAMAGE_COOLDOWN):
             old_player_dx, old_player_dy = self.player.dx, self.player.dy
             self.player.dx = self.dx/2
             self.player.dy = self.dy/2
@@ -583,6 +597,7 @@ def main():
 
     # Game loop, YIPPEEEEEEE
     while running:
+        current_time = pygame.time.get_ticks()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -599,27 +614,27 @@ def main():
             running = False
 
         for glue in glues:
-            glue.check_for_collisions(objects, pygame.time.get_ticks())
+            glue.check_for_collisions(objects, current_time)
             glue.check_bounds()
             glue.apply_friction()
-            if (pygame.time.get_ticks() - glue.movement_timer >= GLUE_MOVEMENT_TIME):
+            if (current_time - glue.movement_timer >= GLUE_MOVEMENT_TIME):
                 glue.random_move()
-                glue.movement_timer = pygame.time.get_ticks()
+                glue.movement_timer = current_time
             else:
                 glue.move()
                 # glue.check_bounds()
 
         for obj in objects:
             if isinstance(obj, Player):
-                obj.player_move()
+                obj.player_move(current_time)
                 if obj.health <= 0:
                     game_end(model)
                     running = False
             if isinstance(obj, AI):
-                obj.ai_move(glues, pygame.time.get_ticks())
-                obj.check_for_collisions(pygame.time.get_ticks())
-            obj.in_glue = False
-        draw_game(objects, glues, pygame.time.get_ticks() - previous_time)
+                obj.ai_move(glues, current_time)
+                obj.check_for_collisions(current_time)
+                obj.in_glue = False
+        draw_game(objects, glues, current_time - previous_time)
         clock.tick(60)
 
 
