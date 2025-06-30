@@ -17,6 +17,7 @@ COLOR_CHANNELS = 3
 # User input can be turned off if you want to change this code for testing rather than using user input for testing.
 USER_INPUT = True
 # Test dataset will change when I get a better test dataset. If I ever get one ):
+# Update: No new dataset...  Placeholder is no longer a placeholder ig
 TEST_ROOT = "Placeholder"
 
 
