@@ -1,7 +1,8 @@
 # Todo: 
-# 1: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently.
-# 2: Change the saving method to be compatible with the changed made in #1. 
-# 3: Get happy.
+# 1: Reorganize code using the new AIManager class
+# 2: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently.
+# 3: Change the saving method to be compatible with the changed made in #2. 
+# 4: Get happy.
 
 import torch
 import sys
@@ -20,7 +21,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 30
+GLUES = 0
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -248,15 +249,21 @@ class Player(Object):
         self.apply_friction()
         self.check_max_velocity()
 
+        # If the player is controlling the square as known by self.override equaling true. 
+        # Then we simply move the object and check the boundries then return ending the function.
         if self.override:
             self.move()
             self.check_bounds()
             return
 
+        # If self.override = False and the player square has not collided with any objects.
+        # Then the square moves randomly via the random_move() function
         if not self.contacted_object:
             self.random_move()
             return
         
+        # If there is a collision with 1 or more objects then the player object will accelerate away from the object(s) which collided with it.
+        # This allows for better automated movement of the player square when it is not being controlled by the player.
         avg_x, avg_y = self.get_objects_average()
         x, y = self.location()
         if avg_x < x:
@@ -269,15 +276,21 @@ class Player(Object):
         else:
             self.dy -= ACCELERATION
 
+        # This if statement below will make the player square continue to move away from the contacted objects
+        # for 1/4 of a second so the player square will make some distance between the object it collided with and itself.
         if current_time - REMOVE_OBJ_TIME >= self.remove_objects_timer:
             self.contacted_object = False
             self.objects.clear()
 
+        # Calling the move() and check_bounds() functions if random_move() is not called.
         self.move()
         self.check_bounds()
 
 
     def get_objects_average(self):
+        # This function returns the average x and y coords of the center of all collided objects.
+        # This will be utilized to decide the direction the player will move when it is collided with multiple objects.
+
         average_obj_x = 0
         average_obj_y = 0
         for obj in self.objects:
@@ -291,20 +304,17 @@ class Player(Object):
 class AI(Object):
     # This is the object which the neural network will control. It is the AI which will hunt the player.
 
-    def __init__(self, x, y, width, height, window, color, model, player):
+    def __init__(self, x, y, width, height, window, color):
         super().__init__(x, y, width, height, window, color)
-        self.model = model
-        self.player = player
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=LEARNING_RATE)
         self.glue_value = 0
         self.timer = 0
         self.h0 = None
         self.c0 = None
-        self.directional_vector = None
         self.change_direction_timer = 0
-        self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32)
+        self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32) # AM
 
-    def add_frame_to_memory(self, frame):
+    def add_frame_to_memory(self, frame): # AM
+        self.memory = self.memory.to("cpu")
 
         for i in range(NUM_SAVED_FRAMES):
             if ((self.memory[NUM_SAVED_FRAMES - (i+1)] == torch.zeros(SEQUENCE_LENGTH, dtype=torch.float32)).sum().item() == SEQUENCE_LENGTH):
@@ -312,113 +322,41 @@ class AI(Object):
                 return
         
         self.memory = torch.cat((self.memory[1 : NUM_SAVED_FRAMES], frame), dim=0)
+        self.memory = self.memory.to(device)
 
-    def ai_move(self, glues, current_time):
-        # Prepare the input tensors to be fed into the neural network.
-        changed = False
-        if self.directional_vector is None:
-            changed = True
-            x, y = self.player.get_center()
-            x_ai, y_ai = self.get_center()
-            X = torch.tensor([
-                x_ai, 
-                y_ai,
-                self.dx,
-                self.dy,
-                x, 
-                y,
-                self.player.dx,
-                self.player.dy
-                ], dtype=torch.float32).to(device)
-            
-            list_glues_location = []
-            for glue in glues:
-                x_glue, y_glue = glue.get_center()
-                list_glues_location.append(x_glue/WINDOW_X)
-                list_glues_location.append(y_glue/WINDOW_Y)
-
-            glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
-            X = torch.cat((X, glue_tensor), dim=0)
-            X = X.unsqueeze(0).to("cpu")
-            self.add_frame_to_memory(X)
-            
-            self.memory = self.memory.to(device)
-
-            # Feed the input tensor into the neural network and get the output tensor then process the data to get the direction of the AI's acceleration.
-            # output is as a vector containung 4 values that are from 0-1. With each value representing a direction: [up, down, left, right].
-            original_output, self.h0, self.c0 = self.model(self.memory, self.h0, self.c0)
-            original_output = original_output.squeeze(0)
-            output = torch.sigmoid(original_output).to("cpu")
-            output = (output > 0.5)
-            self.directional_vector = output
-            self.memory = self.memory.to("cpu")
-            # print(f"Original Output: {original_output}\nOutput: {output}")
-
-        if (self.directional_vector[0]):
+    def ai_move(self, directional_vector):
+        if (directional_vector[0]):
             self.dy -= ACCELERATION
-        if (self.directional_vector[1]):
+        if (directional_vector[1]):
             self.dy += ACCELERATION
-        if (self.directional_vector[2]):
+        if (directional_vector[2]):
             self.dx -= ACCELERATION
-        if (self.directional_vector[3]):
+        if (directional_vector[3]):
             self.dx += ACCELERATION
 
         self.check_bounds()
         self.apply_friction()
         self.check_max_velocity()        
         self.move()
-        if changed:
-            self.train_ai(original_output)
-        self.glue_value = 0
-        if (current_time - self.change_direction_timer >= AI_FORWARD_TIME):
-            self.directional_vector = None
-            self.change_direction_timer = current_time
-            
 
-    def train_ai(self, output):
-        # Trains the AI using the custom loss function. The loss function is based on the distance between the AI and the player.
-        # The loss function is used to update the weights of the neural network.
-
-        ai_x, ai_y = self.get_center()
-        player_x, player_y = self.player.get_center()
-
-        proper_dx, proper_dy = False, False
-        if self.dx > 0 and player_x > ai_x:
-            proper_dx = True
-        elif self.dx < 0 and player_x < ai_x:
-            proper_dx = True
-        elif self.dx == 0 and (player_x + PLAYER_DIM/2 > ai_x and player_x - PLAYER_DIM/2 < ai_x):
-            proper_dx = True
-
-        if self.dy > 0 and player_y > ai_y:
-            proper_dy = True
-        elif self.dy < 0 and player_y < ai_y:
-            proper_dy = True
-        elif self.dy == 0 and (player_y + PLAYER_DIM/2 > ai_y and player_y - PLAYER_DIM/2 < ai_y):
-            proper_dy = True
-
-        self.optimizer.zero_grad()
-        loss = self.model.calculate_loss(self.player, self, self.glue_value, output, proper_dx, proper_dy)
-        loss.backward()
-        self.optimizer.step()
-
-    def check_for_collisions(self, current_time):
-        # check for collision between the AI and player and removes 5 health from the player if they collide.
-        if self.hitbox.colliderect(self.player.hitbox):
-            self.player.contacted_object = True
-            self.player.objects.append(self)
-            self.player.remove_objects_timer = current_time
+    def check_for_collisions(self, current_time, player):
+        
+        if self.hitbox.colliderect(player.hitbox):
+            player.contacted_object = True
+            player.objects.append(self)
+            player.remove_objects_timer = current_time
         else:
             return
         
+        # check for collision between the AI and player and removes 2 health from the player if they collide.
         if (current_time - self.timer >= DAMAGE_COOLDOWN):
-            old_player_dx, old_player_dy = self.player.dx, self.player.dy
-            self.player.dx = self.dx/2
-            self.player.dy = self.dy/2
+            old_player_dx, old_player_dy = player.dx, player.dy
+            player.dx = self.dx/2
+            player.dy = self.dy/2
             self.dx = old_player_dx/2
             self.dy = old_player_dy/2
             self.timer = current_time
-            self.player.health -= 2
+            player.health -= 2
 
     def moving_into_wall(self, x_axis):
         # Checks if the AI is moving into a wall. If it is, it returns True.
@@ -448,12 +386,117 @@ class LSTM(nn.Module):
 
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
         self.output_layer = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x, h0, c0):
+        # Input tensor ideas: sequence = [aix, aiy, dx, dy, player_x, player_y, glue_x1, glue_y1, glue_x2, glue_y2, ...]
+        # where dx and dy are the player's velocity, player_x and player_y are the player's position,
+        # Input_Tensor = [NUM_SAVED_FRAMES, sequence length]. Where there will be NUM_SAVED_FRAMES amount of sequances in the tensor.
+        # The sequences include the current frame plus the last NUM_SAVED_FRAMES-1 frames.
+
+        if (h0 is None):
+            h0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
+        if (c0 is None):
+            c0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
         
-    def calculate_loss(self, player, ai, glue_value, output, proper_direction_x, proper_direction_y):
+        x, (h0, c0) = self.lstm(x, (h0, c0))
+        x = self.output_layer(x[-1])
+        
+        h0 = h0.detach()
+        c0 = c0.detach()
+
+        # Output tensor idea: [up, down, left, right]
+        # where up, down, left, and right are the AI's actions to move. Each variable will be between 0 and 1. 
+        return x, h0, c0
+    
+
+class AIManager:
+    def __init__(self, num_ais, glues, player):
+        self.model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
+        self.ai_list = self.create_ais(num_ais)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=LEARNING_RATE)
+        self.glues = glues
+        self.player = player
+
+    def create_ais(self, num_ais):
+        ais = []
+        for _ in range(num_ais):
+            ais.append(AI(
+                random.randint(0, WINDOW_X-PLAYER_DIM), 
+                random.randint(0, WINDOW_Y-PLAYER_DIM), 
+                PLAYER_DIM, 
+                PLAYER_DIM, 
+                window, 
+                RED
+                ))
+        return ais
+    
+    def create_tensor(self, ai):
+        x, y = self.player.get_center()
+        x_ai, y_ai = ai.get_center()
+        X = torch.tensor([
+            x_ai, 
+            y_ai,
+            ai.dx,
+            ai.dy,
+            x, 
+            y,
+            self.player.dx,
+            self.player.dy
+            ], dtype=torch.float32).to(device)
+        
+        list_glues_location = []
+        for glue in self.glues:
+            x_glue, y_glue = glue.get_center()
+            list_glues_location.append(x_glue/WINDOW_X)
+            list_glues_location.append(y_glue/WINDOW_Y)
+
+        glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
+        X = torch.cat((X, glue_tensor), dim=0)
+        frame = X.unsqueeze(0).to("cpu")
+        ai.add_frame_to_memory(frame)
+    
+    def move_ais(self):
+        for ai in self.ai_list:
+            self.create_tensor(ai)
+            logits, ai.h0, ai.c0 = self.model(ai.memory.to(device), ai.h0, ai.c0)
+            logits = logits.squeeze(0)
+            output = torch.sigmoid(logits)
+            output = (output >= 0.5)
+            ai.ai_move(output)
+            self.train_ai(ai, logits)
+
+    def train_ai(self, ai, output): # AM
+        # Trains the AI using the custom loss function. The loss function is based on the distance between the AI and the player.
+        # The loss function is used to update the weights of the neural network.
+
+        ai_x, ai_y = ai.get_center()
+        player_x, player_y = self.player.get_center()
+
+        proper_dx, proper_dy = False, False
+        if ai.dx > 0 and player_x > ai_x:
+            proper_dx = True
+        elif ai.dx < 0 and player_x < ai_x:
+            proper_dx = True
+        elif ai.dx == 0 and (player_x + PLAYER_DIM/2 > ai_x and player_x - PLAYER_DIM/2 < ai_x):
+            proper_dx = True
+
+        if ai.dy > 0 and player_y > ai_y:
+            proper_dy = True
+        elif ai.dy < 0 and player_y < ai_y:
+            proper_dy = True
+        elif ai.dy == 0 and (player_y + PLAYER_DIM/2 > ai_y and player_y - PLAYER_DIM/2 < ai_y):
+            proper_dy = True
+
+        self.optimizer.zero_grad()
+        loss = self.calculate_loss(ai, ai.glue_value, output, proper_dx, proper_dy)
+        loss.backward()
+        self.optimizer.step()
+
+    def calculate_loss(self, ai, glue_value, output, proper_direction_x, proper_direction_y): # AM
         
         # Convert positions to tensors FIRST (maintaining gradients if needed)
         ai_x, ai_y = ai.get_center()
-        player_x, player_y = player.get_center()
+        player_x, player_y = self.player.get_center()
 
         ai_pos = torch.tensor([ai_x, ai_y], dtype=torch.float32, device=output.device)
         player_pos = torch.tensor([player_x, player_y], dtype=torch.float32, device=output.device)
@@ -493,26 +536,30 @@ class LSTM(nn.Module):
         
         return loss
 
-    def forward(self, x, h0, c0):
-        # Input tensor ideas: sequence = [aix, aiy, dx, dy, player_x, player_y, glue_x1, glue_y1, glue_x2, glue_y2, ...]
-        # where dx and dy are the player's velocity, player_x and player_y are the player's position,
-        # Input_Tensor = [NUM_SAVED_FRAMES, sequence length]. Where there will be NUM_SAVED_FRAMES amount of sequances in the tensor.
-        # The sequences include the current frame plus the last NUM_SAVED_FRAMES-1 frames.
+    def load_model(self):
+        # This function checks if one of the saved models can be loaded, and if it can the function will load the model.
+        # If not the function will create a new model and save its input shape so it can be saved and used in the future.
 
-        if (h0 is None):
-            h0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
-        if (c0 is None):
-            c0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
+        # Check if model exists
+        with open(TEXT_FILE, "r") as f:
+            lines = f.readlines()
+            for line in lines:
+                split = line.split()
+                if (int(split[0]) == INPUT_SHAPE[0]) and (int(split[1]) == INPUT_SHAPE[1]):
+                    self.model.load_state_dict(torch.load(SAVE_FOLDER + "/" + "model" + "_" + split[0] + "_" + split[1] + ".pth"))
+                    print(f"Loaded model_{INPUT_SHAPE} successfully.")
+                    return self.model
         
-        x, (h0, c0) = self.lstm(x, (h0, c0))
-        x = self.output_layer(x[-1])
+        # If model does not exist save the new model to the txt file.
+        with open(TEXT_FILE, "a") as f:
+            f.write(f"{INPUT_SHAPE[0]} {INPUT_SHAPE[1]}\n")
+            print(f"model_{INPUT_SHAPE} does not exist and thus cannot be found. Now creating a new model")
+            return self.model
         
-        h0 = h0.detach()
-        c0 = c0.detach()
-
-        # Output tensor idea: [up, down, left, right]
-        # where up, down, left, and right are the AI's actions to move. Each variable will be between 0 and 1. 
-        return x, h0, c0
+    def save_model(self):
+        # Saves the model 
+        torch.save(self.model.state_dict(), SAVE_FOLDER + "/" + "model_" + str(INPUT_SHAPE[0]) + "_" + str(INPUT_SHAPE[1]) + ".pth")
+        print(f"Model {INPUT_SHAPE} saved successfully.")
 
 
 def check_for_folder():
@@ -522,55 +569,31 @@ def check_for_folder():
         open(TEXT_FILE, "x")
 
 
-def load_model(model):
-    # This function checks if one of the saved models can be loaded, and if it can the function will load the model.
-    # If not the function will create a new model and save its input shape so it can be saved and used in the future.
-
-    # Check if model exists
-    with open(TEXT_FILE, "r") as f:
-        lines = f.readlines()
-        for line in lines:
-            split = line.split()
-            if (int(split[0]) == INPUT_SHAPE[0]) and (int(split[1]) == INPUT_SHAPE[1]):
-                model.load_state_dict(torch.load(SAVE_FOLDER + "/" + "model" + "_" + split[0] + "_" + split[1] + ".pth"))
-                print(f"Loaded model_{INPUT_SHAPE} successfully.")
-                return model
-    
-    # If model does not exist save the new model to the txt file.
-    with open(TEXT_FILE, "a") as f:
-        f.write(f"{INPUT_SHAPE[0]} {INPUT_SHAPE[1]}\n")
-        print(f"model_{INPUT_SHAPE} does not exist and thus cannot be found. Now creating a new model")
-        return model
-        
-
-def save_model(model):
-    # Saves the model 
-    torch.save(model.state_dict(), SAVE_FOLDER + "/" + "model_" + str(INPUT_SHAPE[0]) + "_" + str(INPUT_SHAPE[1]) + ".pth")
-    print(f"Model {INPUT_SHAPE} saved successfully.")
-
-
-def game_end(model):
+def game_end(ai_manager):
     global previous_time
 
     try:
-        save_model(model)
+        ai_manager.save_model()
         previous_time = pygame.time.get_ticks()
         main()
     except RecursionError:
         print("RecursionError: Too many recursions. Program will now exit.")
 
 
-def draw_game(objects, glues, time):
+def draw_game(player, glues, time, ai_manager):
     # Draws the game on the window. Quite self explanatory.
     window.fill(BLACK)
 
-    for obj in objects:
-        obj.display()
+    player.display()
+
+    for ai in ai_manager.ai_list:
+        ai.display()
+
     for glue in glues:
         glue.display()
 
     try: 
-        text = font.render(f"Health: {objects[0].health}    |    Time Remaining: {round((TIME_LIMIT - time)/1000)}", True, WHITE)
+        text = font.render(f"Health: {player.health}    |    Time Remaining: {round((TIME_LIMIT - time)/1000)}", True, WHITE)
     except Exception:
         text = font.render("Health: 0", True, WHITE)
     window.blit(text, (10, 10))
@@ -582,18 +605,11 @@ def main():
     running = True
     clock = pygame.time.Clock()
     player = Player(WINDOW_X/2-PLAYER_DIM/2, WINDOW_Y/2-PLAYER_DIM/2, PLAYER_DIM, PLAYER_DIM, window, WHITE)
-    objects = []
-    objects.append(player)
     glues = []
     for _ in range(GLUES):
         glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
         glues.append(glue)
-    model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
-    model = load_model(model)
-    
-    for _ in range(NUM_AI_OBJECTS):
-        ai = AI(random.randint(0, WINDOW_X-PLAYER_DIM), random.randint(0, WINDOW_Y-PLAYER_DIM), PLAYER_DIM, PLAYER_DIM, window, RED, model, player)
-        objects.append(ai)
+    ai_manager = AIManager(NUM_AI_OBJECTS, glues, player)
 
     # Game loop, YIPPEEEEEEE
     while running:
@@ -604,17 +620,17 @@ def main():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     # Reset the game if the space key is pressed.
-                    game_end(model)
+                    game_end(ai_manager)
                     running = False
                 elif event.key == pygame.K_LSHIFT:
                     player.override = not player.override
 
         if pygame.time.get_ticks()-previous_time >= TIME_LIMIT:
-            game_end(model)
+            game_end(ai_manager)
             running = False
 
         for glue in glues:
-            glue.check_for_collisions(objects, current_time)
+            glue.check_for_collisions(ai_manager.ai_list + [player], current_time)
             glue.check_bounds()
             glue.apply_friction()
             if (current_time - glue.movement_timer >= GLUE_MOVEMENT_TIME):
@@ -624,21 +640,19 @@ def main():
                 glue.move()
                 # glue.check_bounds()
 
-        for obj in objects:
-            if isinstance(obj, Player):
-                obj.player_move(current_time)
-                if obj.health <= 0:
-                    game_end(model)
-                    running = False
-            if isinstance(obj, AI):
-                obj.ai_move(glues, current_time)
-                obj.check_for_collisions(current_time)
-                obj.in_glue = False
-        draw_game(objects, glues, current_time - previous_time)
+        ai_manager.move_ais()
+        for ai in ai_manager.ai_list:
+            ai.check_for_collisions(current_time, player)
+
+        player.player_move(current_time)
+        if player.health <= 0:
+            game_end(ai_manager)
+            running = False
+        draw_game(player, glues, current_time - previous_time, ai_manager)
         clock.tick(60)
 
 
-    save_model(model)
+    ai_manager.save_model()
     pygame.quit()
 
 
