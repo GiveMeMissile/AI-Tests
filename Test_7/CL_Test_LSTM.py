@@ -21,7 +21,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 0
+GLUES = 15
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -41,7 +41,7 @@ SAVE_FOLDER = "CL_LSTM_Models"
 TEXT_FILE = SAVE_FOLDER + "/" +"model_numbers.txt"
 LEARNING_RATE = 0.0001
 AI_FORWARD_TIME = 1000/40 # The AI object will change its directional vector 15 times each second thanks to this variable, this will be used for testing later
-NUM_AI_OBJECTS = 1
+NUM_AI_OBJECTS = 3
 NUM_SAVED_FRAMES = 60
 SEQUENCE_LENGTH = 8 + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
@@ -58,15 +58,21 @@ font = pygame.font.SysFont("New Roman", 30)
 class Object:
     # Base class for all objects in the game. It has a hitbox, velocity, and color.
 
-    def __init__(self, x, y, width, height, window, color):
+    def __init__(self, width, height, window, color, objects, distance, x=None, y=None):
         self.width = width
         self.height = height
-        self.hitbox = pygame.Rect(x, y, width, height)
         self.dx = 0
         self.dy = 0
         self.color = color
         self.window = window
         self.amplifier = 1
+        if x is None and y is None:
+            x, y = self.find_valid_location(objects, distance)
+        elif x is None:
+            x, _ = self.find_valid_location(objects, distance)
+        elif y is None:
+            _, y = self.find_valid_location(objects, distance)
+        self.hitbox = pygame.Rect(x, y, width, height)
 
     def display(self):
         pygame.draw.rect(self.window, self.color, self.hitbox)
@@ -142,13 +148,31 @@ class Object:
     def get_center(self):
         # Returns the center of the object.
         return self.hitbox.x + self.width/2, self.hitbox.y + self.height/2
+    
+    def find_valid_location(self, objects, distance):
+        # This function finds a random location where the object is not on top of another object.
+        x, y = 0, 0
+        not_valid = True
+        while not_valid:
+            x = random.randint(0, WINDOW_X - int(self.width/2))
+            y = random.randint(0, WINDOW_Y - int(self.height/2))
+            for obj in objects:
+                obj_x, obj_y = obj.get_center()
+                if (x > obj_x - distance) and (x < obj_x + distance):
+                    break
+                elif (y > obj_y - distance) and (y < obj_y + distance):
+                    break
+                else:
+                    not_valid = False
+
+        return x - self.width/2, y - self.height/2
 
 
 class Glue(Object):
     # Simple obstacle that is an issue for both the player and AI.
 
-    def __init__(self, x, y, width, height, window, color):
-        super().__init__(x, y, width, height, window, color)
+    def __init__(self, width, height, window, color, objects, distance, x=None, y=None):
+        super().__init__(width, height, window, color, objects, distance, x, y)
         self.timer = 0
         self.glue_drag = 0.5
         self.amplifier = 10
@@ -220,8 +244,8 @@ class Glue(Object):
 
                           
 class Player(Object):
-    def __init__(self, x, y, width, height, window, color):
-        super().__init__(x, y, width, height, window, color)
+    def __init__(self, width, height, window, color, objects, distance, x=None, y=None):
+        super().__init__(width, height, window, color, objects, distance, x, y)
         self.override = not RANDOM_MOVE
         self.health = 30
         self.contacted_object = False
@@ -304,8 +328,8 @@ class Player(Object):
 class AI(Object):
     # This is the object which the neural network will control. It is the AI which will hunt the player.
 
-    def __init__(self, x, y, width, height, window, color):
-        super().__init__(x, y, width, height, window, color)
+    def __init__(self, width, height, window, color, objects, distance, x=None, y=None):
+        super().__init__(width, height, window, color, objects, distance, x, y)
         self.glue_value = 0
         self.timer = 0
         self.h0 = None
@@ -412,21 +436,21 @@ class LSTM(nn.Module):
 class AIManager:
     def __init__(self, num_ais, glues, player):
         self.model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
-        self.ai_list = self.create_ais(num_ais)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=LEARNING_RATE)
         self.glues = glues
         self.player = player
+        self.ai_list = self.create_ais(num_ais)
 
     def create_ais(self, num_ais):
         ais = []
         for _ in range(num_ais):
             ais.append(AI(
-                random.randint(0, WINDOW_X-PLAYER_DIM), 
-                random.randint(0, WINDOW_Y-PLAYER_DIM), 
                 PLAYER_DIM, 
                 PLAYER_DIM, 
                 window, 
-                RED
+                RED,
+                [self.player] + self.glues,
+                (PLAYER_DIM+GLUE_DIM)/2
                 ))
         return ais
     
@@ -604,10 +628,10 @@ def main():
     sys.setrecursionlimit(100000)
     running = True
     clock = pygame.time.Clock()
-    player = Player(WINDOW_X/2-PLAYER_DIM/2, WINDOW_Y/2-PLAYER_DIM/2, PLAYER_DIM, PLAYER_DIM, window, WHITE)
+    player = Player(PLAYER_DIM, PLAYER_DIM, window, WHITE, objects=[], distance=None, x=WINDOW_X/2-PLAYER_DIM/2, y=WINDOW_Y/2-PLAYER_DIM/2)
     glues = []
     for _ in range(GLUES):
-        glue = Glue(random.randint(0, WINDOW_X-GLUE_DIM), random.randint(0, WINDOW_Y-GLUE_DIM), GLUE_DIM, GLUE_DIM, window, YELLOW)
+        glue = Glue(GLUE_DIM, GLUE_DIM, window, YELLOW, [player]+glues, distance=GLUE_DIM)
         glues.append(glue)
     ai_manager = AIManager(NUM_AI_OBJECTS, glues, player)
 
@@ -638,7 +662,6 @@ def main():
                 glue.movement_timer = current_time
             else:
                 glue.move()
-                # glue.check_bounds()
 
         ai_manager.move_ais()
         for ai in ai_manager.ai_list:
