@@ -436,6 +436,7 @@ class LSTM(nn.Module):
 class AIManager:
     def __init__(self, num_ais, glues, player):
         self.model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
+        self.model = self.load_model()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=LEARNING_RATE)
         self.glues = glues
         self.player = player
