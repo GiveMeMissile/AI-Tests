@@ -1,11 +1,11 @@
 # Todo: 
-# 1: Reorganize code using the new AIManager class
-# 2: Add an RL based method of learning for the AI. Such as using rewards and policy and target model.
+# 1: Reorganize code using the new AIManager class (DONE)
+# 2: Add an RL based method of learning for the AI. Such as using rewards and policy and target model. (DONEish)
 # 3: Add experiance replay for the better training of the AI. (Also save the data for future training?)
 # 4: Implement the Epsilon Greedy Policy with the utilization of the random move function.
 # 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently.
-# 6: Change the saving method to be compatible with the changed made in #3. 
-# 7: Get happy.
+# 6: Change the saving method to be compatible with the changed made in 3-5. 
+# 7: Get happy... (Impossible)
 
 import torch
 import sys
@@ -49,6 +49,7 @@ NUM_SAVED_FRAMES = 60
 SEQUENCE_LENGTH = 8 + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
+SYNC_MODEL = 10
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -453,7 +454,7 @@ class LSTM(nn.Module):
 class AIManager:
     def __init__(self, num_ais, glues, player):
         self.policy_model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
-        # self.policy_model = self.load_model()
+        self.policy_model = self.load_model()
         self.target_model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
         self.target_model.load_state_dict(self.policy_model.state_dict())
         self.optimizer = torch.optim.Adam(self.policy_model.parameters(), lr=LEARNING_RATE)
@@ -462,6 +463,7 @@ class AIManager:
         self.ai_list = self.create_ais(num_ais)
         self.total_reward = 0
         self.loss_fn = nn.MSELoss()
+        self.frame_count = 0
 
     def create_ais(self, num_ais):
         ais = []
@@ -502,6 +504,11 @@ class AIManager:
         ai.add_frame_to_memory(frame)
     
     def move_ais(self):
+
+        # Sync the Target model with the Policy models after 10 frames. 
+        if self.frame_count >= SYNC_MODEL: 
+            self.target_model.load_state_dict(self.policy_model.state_dict()) 
+
         for ai in self.ai_list:
             self.create_tensor(ai)
             q_values, ai.h0, ai.c0 = self.policy_model(ai.memory.to(device), ai.h0, ai.c0)
@@ -512,23 +519,30 @@ class AIManager:
             self.train_ai(ai, q_values, q_targets)
 
     def train_ai(self, ai, q_values, q_targets): # AM
-        # Trains the AI using the custom loss function. The loss function is based on the distance between the AI and the player.
-        # The loss function is used to update the weights of the neural network.
-        reward = 0
+        # Trains the AI using Q-learning stuff I learned from the Internet...
+        # Im so bad at ts lol. For now...
 
+        # Calculate the reward
+        reward = 0
         if ai.in_glue:
             reward -= 50
         if ai.touching_player:
             reward += 100
+        if ai.moving_into_wall(True):
+            reward -= 10
+        if ai.moving_into_wall(False):
+            reward -= 10
 
+        # Modify the target value to match the actual reward.
+        # print(f"Q-values: {q_values}\nPrevious Target: {q_targets}\nAction: {q_values.argmax()}\nReward: {reward}\n")
         target = torch.FloatTensor(reward + DISCOUNT_FACTOR * self.target_model(ai.memory.to(device), ai.h0, ai.c0)[0].max().to("cpu"))
-
         q_targets[q_values.argmax()] = target
-
         self.total_reward += reward
 
+        # Normal PyTorch Stuff
         self.optimizer.zero_grad()
         loss = self.loss_fn(q_values, q_targets)
+        # print(f"New Target: {q_targets}\nLoss: {loss}\n")
         loss.backward()
         self.optimizer.step()
 
@@ -634,7 +648,7 @@ def main():
                 glue.movement_timer = current_time
             else:
                 glue.move()
-
+        ai_manager.frame_count += 1
         ai_manager.move_ais()
         for ai in ai_manager.ai_list:
             ai.check_for_collisions(current_time, player)
