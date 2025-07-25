@@ -1,8 +1,8 @@
 # Todo: 
 # 1: Reorganize code using the new AIManager class (DONE)
 # 2: Add an RL based method of learning for the AI. Such as using rewards and policy and target model. (DONE)
-# 3: Add experiance replay for the better training of the AI. (Also save the data for future training?)  (In Progress)
-# 4: Implement the Epsilon Greedy Policy with the utilization of the random move function.
+# 3: Add experiance replay for the better training of the AI. (Also save the data for future training?)  (In Progress?)
+# 4: Implement the Epsilon Greedy Policy with the utilization of the random move function (Or another).
 # 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently.
 # 6: Change the saving method to be compatible with the changed made in 3-5. 
 # 7: Get happy... (Impossible)
@@ -25,7 +25,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 15
+GLUES = 0
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -51,7 +51,7 @@ SEQUENCE_LENGTH = 8 + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
 SYNC_MODEL = 10
-BATCH_SIZE = 16
+BATCH_SIZE = 32
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -447,12 +447,12 @@ class LSTM(nn.Module):
         # The sequences include the current frame plus the last NUM_SAVED_FRAMES-1 frames.
 
         if (h0 is None):
-            h0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
+            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
         if (c0 is None):
-            c0 = torch.zeros(self.num_layers, self.hidden_size).to(device)
+            c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
         
         x, (h0, c0) = self.lstm(x, (h0, c0))
-        x = self.output_layer(x[-1])
+        x = self.output_layer(x[:, -1, :])
         
         h0 = h0.detach()
         c0 = c0.detach()
@@ -486,7 +486,7 @@ class AIManager:
         self.total_reward = 0
         self.loss_fn = nn.MSELoss()
         self.frame_count = 0
-        self.data_manager = TrainingData(max_length=1000)
+        self.data_manager = TrainingData(max_length=3600)
 
     def create_ais(self, num_ais):
         ais = []
@@ -533,9 +533,11 @@ class AIManager:
             self.target_model.load_state_dict(self.policy_model.state_dict()) 
 
         for ai in self.ai_list:
-            q_values, _, _ = self.policy_model(ai.memory.to(device))
+            q_values, _, _ = self.policy_model(ai.memory.unsqueeze(0).to(device))
             q_values = q_values.squeeze(0)
             ai.previous_memory = ai.memory
+            # print(f"\nmemory shape: {ai.memory.shape}")
+            # print(f"Output shape: {q_values.shape}")
             ai.ai_move(q_values)
 
     def save_data(self, ai):
@@ -555,26 +557,32 @@ class AIManager:
     def train_ai(self, ai):
 
         batch = self.data_manager.get_sample(BATCH_SIZE)
-        for state, action, new_state, reward in batch:
-            # Modify the target value to match the actual reward.
-            # print(f"Q-values: {q_values}\nPrevious Target: {q_targets}\nAction: {q_values.argmax()}\nReward: {reward}\n")
 
-            q_values, _, _ = self.policy_model(state.to(device))
-            q_values = q_values.squeeze(0)
+        states = [batch[i][0].to(device) for i in range(len(batch))]
+        states = torch.stack(states, dim=0)
 
-            q_targets, _, _ = self.target_model(state.to(device))
-            q_targets = q_targets.squeeze(0)
+        # print(f"Batched Shape: {states.shape}")
 
-            with torch.no_grad():
-                target = torch.FloatTensor(reward + DISCOUNT_FACTOR * self.target_model(new_state.to(device), ai.h0, ai.c0)[0].max().to("cpu"))
-            q_targets[action] = target
+        new_states = [batch[i][2].to(device) for i in range(len(batch))]
+        new_states = torch.stack(new_states, dim=0)
 
-            # Normal PyTorch Stuff
-            self.optimizer.zero_grad()
-            loss = self.loss_fn(q_values, q_targets)
-            # print(f"New Target: {q_targets}\nLoss: {loss}\n")
-            loss.backward()
-            self.optimizer.step()
+        q_values, _, _ = self.policy_model(states)
+        q_targets, _, _ = self.target_model(states)
+
+        with torch.no_grad():
+            targets, _, _ = self.target_model(new_states)
+
+        for i in range(len(batch)):
+            reward = batch[i][3]
+            action = batch[i][1]
+            target = torch.FloatTensor(reward + DISCOUNT_FACTOR * targets[i].max().to("cpu"))
+
+            q_targets[i][action-1] = target
+
+        self.optimizer.zero_grad()
+        loss = self.loss_fn(q_values, q_targets)
+        loss.backward()
+        self.optimizer.step()
 
     def load_model(self):
         # This function checks if one of the saved models can be loaded, and if it can the function will load the model.
