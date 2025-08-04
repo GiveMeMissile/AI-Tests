@@ -55,8 +55,7 @@ SEQUENCE_LENGTH = 8 + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
 SYNC_MODEL = 10
-BATCH_SIZE = 32
-EPSILON = 0 # 50% random inputs, will make into 100% when epsilon saving and is added. 
+BATCH_SIZE = 64
 EPSILON_DECAY = 100 # How many episodes or "games" the ai plays until epsilon is 0.
 
 
@@ -345,10 +344,10 @@ class AI(Object):
         self.memory = torch.cat((self.memory[1 : NUM_SAVED_FRAMES], frame), dim=0)
         self.memory = self.memory.to(device)
 
-    def ai_move(self, ai_output):
+    def ai_move(self, ai_output, epsilon):
 
         # Epsilon greedy (Might move to AIManager)
-        if random.random() <= EPSILON:
+        if random.random() <= epsilon:
             self.action = random.randint(0, 8)
             self.random_action += 1
         else:
@@ -412,21 +411,59 @@ class AI(Object):
             self.timer = current_time
             player.health -= 2
 
-    def moving_into_wall(self, x_axis):
+    def moving_into_wall(self, axis='x'):
         # Checks if the AI is moving into a wall. If it is, it returns True.
 
-        if x_axis:
+        if axis == 'x':
             if self.dx > 0 and self.hitbox.x + self.width >= WINDOW_X - 5:
                 return True
             elif self.dx < 0 and self.hitbox.x <= 5:
                 return True
-        else:
+        elif axis == 'y':
             if self.dy > 0 and self.hitbox.y + self.height >= WINDOW_Y - 5:
                 return True
             elif self.dy < 0 and self.hitbox.y <= 5:
                 return True
         
         return False
+    
+    def moving_towards_player(self, player, axis='x'):
+        # checks if the AI is moving towards the player.
+
+        ai_location = None
+        player_location = None
+        velocity = None
+
+        if axis == 'x':
+            ai_location, _ = self.get_center()
+            player_location, _ = player.get_center()
+            velocity = self.dx
+        elif axis == 'y':
+            _, ai_location = self.get_center()
+            _, player_location = player.get_center()
+            velocity = self.dy
+        else:
+            return False
+
+        moving_to_player = False
+        if velocity > 0 and player_location > ai_location:
+            moving_to_player = True
+        elif velocity < 0 and player_location < ai_location:
+            moving_to_player = True
+        
+        return moving_to_player
+    
+    def nearby_player(self, player):
+        # Checks if the AI is close to the player.
+
+        ai_x, ai_y = self.get_center()
+        player_x, player_y = player.get_center()
+        if ((player_x + PLAYER_DIM*2 > ai_x and player_x - PLAYER_DIM*2 < ai_x) 
+            and (player_y + PLAYER_DIM*2 > ai_y and player_y - PLAYER_DIM*2 < ai_y)):
+            return True
+        else:
+            return False
+
 
 
 class TrainingData:
@@ -505,6 +542,7 @@ class AIManager:
         self.loss_fn = nn.SmoothL1Loss()
         self.frame_count = 0
         self.data_manager = TrainingData(max_length=3600)
+        self.epsilon = 0.0
 
     def create_ais(self, num_ais):
         ais = []
@@ -556,7 +594,7 @@ class AIManager:
             ai.previous_memory = ai.memory
             # print(f"\nmemory shape: {ai.memory.shape}")
             # print(f"Output shape: {q_values.shape}")
-            ai.ai_move(q_values)
+            ai.ai_move(q_values, self.epsilon)
 
     def save_data(self, ai):
         # Create Rewards
@@ -565,10 +603,16 @@ class AIManager:
             reward -= 0.5
         if ai.touching_player:
             reward += 1.0
-        if ai.moving_into_wall(True):
+        if ai.moving_into_wall(axis='x'):
             reward -= 0.1
-        if ai.moving_into_wall(False):
+        if ai.moving_into_wall(axis='y'):
             reward -= 0.1
+        if ai.moving_towards_player(self.player, axis='x') and not ai.in_glue:
+            reward += 0.1
+        if ai.moving_towards_player(self.player, axis='y') and not ai.in_glue:
+            reward += 0.1
+        if ai.nearby_player(self.player) and not ai.in_glue:
+            reward += 0.2
 
         reward -= 0.01 # Small punishment for loss of time.
 
@@ -642,7 +686,7 @@ def game_end(ai_manager):
     for ai in ai_manager.ai_list:
         print(f"\nRandom Moves: {ai.random_action} | Ai Move: {ai.ai_action}\n")
     try:
-        new_epsilon = (EPSILON - EPSILON/EPSILON_DECAY) # This code does nothing for now. 
+        new_epsilon = (ai_manager.epsilon - ai_manager.epsilon/EPSILON_DECAY) # This code does nothing for now. 
         ai_manager.save_model()
         previous_time = pygame.time.get_ticks()
         main()
