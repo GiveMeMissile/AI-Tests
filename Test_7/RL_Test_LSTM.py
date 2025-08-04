@@ -1,9 +1,13 @@
+# Note: Begin one of the most painful part of this dumb project (Hivemind time).
+# Reorganize how actions are handled in order to be able to function with the hivemind structure of the AI.
+# After the Hivemind has been created. Then I shall remake the model saving in order to work with the current changes (Step 6)
+
 # Todo: 
 # 1: Reorganize code using the new AIManager class (DONE)
 # 2: Add an RL based method of learning for the AI. Such as using rewards and policy and target model. (DONE)
-# 3: Add experiance replay for the better training of the AI. (Also save the data for future training?)  (In Progress?)
-# 4: Implement the Epsilon Greedy Policy with the utilization of the random move function (Or another).
-# 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently.
+# 3: Add experiance replay for the better training of the AI. (Also save the data for future training?)  (DONE)
+# 4: Implement the Epsilon Greedy Policy with the utilization of the random move function (Or another). (DONE)
+# 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently. (In Progress)
 # 6: Change the saving method to be compatible with the changed made in 3-5. 
 # 7: Get happy... (Impossible)
 
@@ -25,7 +29,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 0
+GLUES = 7
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -52,6 +56,8 @@ INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
 SYNC_MODEL = 10
 BATCH_SIZE = 32
+EPSILON = 0 # 50% random inputs, will make into 100% when epsilon saving and is added. 
+EPSILON_DECAY = 100 # How many episodes or "games" the ai plays until epsilon is 0.
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -324,6 +330,10 @@ class AI(Object):
         self.previous_memory = None
         self.action = None
 
+        # Debug variables
+        self.random_action = 0
+        self.ai_action = 0
+
     def add_frame_to_memory(self, frame):
         self.memory = self.memory.to("cpu")
 
@@ -336,8 +346,17 @@ class AI(Object):
         self.memory = self.memory.to(device)
 
     def ai_move(self, ai_output):
-        self.action = torch.argmax(ai_output) + 1
-        directional_vector = self.get_directional_vector(ai_output)
+
+        # Epsilon greedy (Might move to AIManager)
+        if random.random() <= EPSILON:
+            self.action = random.randint(0, 8)
+            self.random_action += 1
+        else:
+            self.action = torch.argmax(ai_output)
+            self.ai_action += 1
+
+        # Moving the AI using the action    
+        directional_vector = self.get_directional_vector()
         if (directional_vector[0]):
             self.dy -= ACCELERATION
         if (directional_vector[1]):
@@ -352,26 +371,25 @@ class AI(Object):
         self.check_max_velocity()        
         self.move()
 
-    def get_directional_vector(self, ai_output):
-        action_number = torch.argmax(ai_output) + 1
-        match action_number:
-            case 1:
+    def get_directional_vector(self):
+        match self.action:
+            case 0:
                 return [False, False, False, False]
-            case 2:
+            case 1:
                 return [True, False, False, False]
-            case 3:
+            case 2:
                 return [False, True, False, False]
-            case 4:
+            case 3:
                 return [False, False, True, False]
-            case 5:
+            case 4:
                 return [False, False, False, True]
-            case 6:
+            case 5:
                 return [True, False, True, False]
-            case 7:
+            case 6:
                 return [True, False, False, True]
-            case 8:
+            case 7:
                 return [False, True, True, False]
-            case 9:
+            case 8:
                 return [False, True, False, True]
 
     def check_for_collisions(self, current_time, player):
@@ -457,18 +475,18 @@ class LSTM(nn.Module):
         h0 = h0.detach()
         c0 = c0.detach()
 
-        # Output tensor: [action 1, action 2, action 3, action 4, action 5, action 6, action 7, action 8, action 9]
+        # Output tensor: [action 0, action 1, action 2, action 3, action 4, action 5, action 6, action 7, action 8]
         # Note: the actions are structured as a binary tensor which determine which direction the thing go. [up, down, left, right]
         # 0 = False, 1 = True
-        # action 1 = [0, 0, 0, 0] Going nowhere (Like my life)
-        # action 2 = [1, 0, 0, 0] Going up
-        # action 3 = [0, 1, 0, 0] Going down
-        # action 4 = [0, 0, 1, 0] Going left
-        # action 5 = [0, 0, 0, 1] Going right
-        # action 6 = [1, 0, 1, 0] Going Up + Left
-        # action 7 = [1, 0, 0, 1] Going Up + Right
-        # action 8 = [0, 1, 1, 0] Going Down + Left
-        # action 9 = [0, 1, 0, 1] Going Down + Right
+        # action 0 = [0, 0, 0, 0] Going nowhere (Like my life)
+        # action 1 = [1, 0, 0, 0] Going up
+        # action 2 = [0, 1, 0, 0] Going down
+        # action 3 = [0, 0, 1, 0] Going left
+        # action 4 = [0, 0, 0, 1] Going right
+        # action 5 = [1, 0, 1, 0] Going Up + Left
+        # action 6 = [1, 0, 0, 1] Going Up + Right
+        # action 7 = [0, 1, 1, 0] Going Down + Left
+        # action 8 = [0, 1, 0, 1] Going Down + Right
         # where up, down, left, and right are the AI's actions to move. Each variable will be a binary value of 0 or 1/False or True. 
         return x, h0, c0
     
@@ -484,7 +502,7 @@ class AIManager:
         self.player = player
         self.ai_list = self.create_ais(num_ais)
         self.total_reward = 0
-        self.loss_fn = nn.MSELoss()
+        self.loss_fn = nn.SmoothL1Loss()
         self.frame_count = 0
         self.data_manager = TrainingData(max_length=3600)
 
@@ -544,13 +562,15 @@ class AIManager:
         # Create Rewards
         reward = 0
         if ai.in_glue:
-            reward -= 50
+            reward -= 0.5
         if ai.touching_player:
-            reward += 100
+            reward += 1.0
         if ai.moving_into_wall(True):
-            reward -= 10
+            reward -= 0.1
         if ai.moving_into_wall(False):
-            reward -= 10
+            reward -= 0.1
+
+        reward -= 0.01 # Small punishment for loss of time.
 
         self.data_manager.append((ai.previous_memory, ai.action, ai.memory, reward))
 
@@ -558,29 +578,26 @@ class AIManager:
 
         batch = self.data_manager.get_sample(BATCH_SIZE)
 
+        actions = [batch[i][1] for i in range(len(batch))]
+        rewards = torch.tensor([batch[i][3] for i in range(len(batch))])
+
         states = [batch[i][0].to(device) for i in range(len(batch))]
         states = torch.stack(states, dim=0)
-
-        # print(f"Batched Shape: {states.shape}")
 
         new_states = [batch[i][2].to(device) for i in range(len(batch))]
         new_states = torch.stack(new_states, dim=0)
 
         q_values, _, _ = self.policy_model(states)
-        q_targets, _, _ = self.target_model(states)
 
         with torch.no_grad():
-            targets, _, _ = self.target_model(new_states)
+            next_q, _, _ = self.target_model(new_states)
+            max_next_q = next_q.max(1)[0]
+            targets = torch.FloatTensor(rewards + DISCOUNT_FACTOR * max_next_q.to("cpu"))
 
-        for i in range(len(batch)):
-            reward = batch[i][3]
-            action = batch[i][1]
-            target = torch.FloatTensor(reward + DISCOUNT_FACTOR * targets[i].max().to("cpu"))
-
-            q_targets[i][action-1] = target
+        q_value_to_action = torch.stack([q_values[i][actions[i]] for i in range(len(batch))])
 
         self.optimizer.zero_grad()
-        loss = self.loss_fn(q_values, q_targets)
+        loss = self.loss_fn(q_value_to_action, targets.to(device))
         loss.backward()
         self.optimizer.step()
 
@@ -620,7 +637,12 @@ def check_for_folder():
 def game_end(ai_manager):
     global previous_time
 
+    print("WHY")
+
+    for ai in ai_manager.ai_list:
+        print(f"\nRandom Moves: {ai.random_action} | Ai Move: {ai.ai_action}\n")
     try:
+        new_epsilon = (EPSILON - EPSILON/EPSILON_DECAY) # This code does nothing for now. 
         ai_manager.save_model()
         previous_time = pygame.time.get_ticks()
         main()
