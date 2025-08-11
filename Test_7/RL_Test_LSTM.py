@@ -7,7 +7,7 @@
 # 2: Add an RL based method of learning for the AI. Such as using rewards and policy and target model. (DONE)
 # 3: Add experiance replay for the better training of the AI. (Also save the data for future training?)  (DONE)
 # 4: Implement the Epsilon Greedy Policy with the utilization of the random move function (Or another). (DONE)
-# 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently. (In Progress)
+# 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently. (DONE?)
 # 6: Change the saving method to be compatible with the changed made in 3-5. 
 # 7: Get happy... (Impossible)
 
@@ -29,7 +29,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 7
+GLUES = 10
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -48,18 +48,17 @@ OUTPUT_SIZE = 9
 SAVE_FOLDER = "RL_LSTM_Models"
 TEXT_FILE = SAVE_FOLDER + "/" +"model_numbers.txt"
 LEARNING_RATE = 0.001
-AI_FORWARD_TIME = 1000/40 # The AI object will change its directional vector 15 times each second thanks to this variable, this will be used for testing later
-NUM_AI_OBJECTS = 1 # Do not change till compatibility is introduced.
+NUM_AI_OBJECTS = 2 # Do not change till compatibility is introduced.
 NUM_SAVED_FRAMES = 20
-SEQUENCE_LENGTH = 8 + 2 * GLUES
+SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
 SYNC_MODEL = 10
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 EPSILON_DECAY = 100 # How many episodes or "games" the ai plays until epsilon is 0.
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cuda" if torch.cuda.is_available() else "cpu"
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
 previous_time = 0
 pygame.init()
@@ -322,27 +321,12 @@ class AI(Object):
         self.in_glue = False
         self.touching_player = False
         self.timer = 0
-        self.h0 = None
-        self.c0 = None
         self.change_direction_timer = 0
-        self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32) # AM (Later)
-        self.previous_memory = None
         self.action = None
 
         # Debug variables
         self.random_action = 0
         self.ai_action = 0
-
-    def add_frame_to_memory(self, frame):
-        self.memory = self.memory.to("cpu")
-
-        for i in range(NUM_SAVED_FRAMES):
-            if ((self.memory[NUM_SAVED_FRAMES - (i+1)] == torch.zeros(SEQUENCE_LENGTH, dtype=torch.float32)).sum().item() == SEQUENCE_LENGTH):
-                self.memory[NUM_SAVED_FRAMES - (i+1)] = frame
-                return
-        
-        self.memory = torch.cat((self.memory[1 : NUM_SAVED_FRAMES], frame), dim=0)
-        self.memory = self.memory.to(device)
 
     def ai_move(self, ai_output, epsilon):
 
@@ -414,16 +398,27 @@ class AI(Object):
     def moving_into_wall(self, axis='x'):
         # Checks if the AI is moving into a wall. If it is, it returns True.
 
+        velocity = None
+        location = None
+
         if axis == 'x':
-            if self.dx > 0 and self.hitbox.x + self.width >= WINDOW_X - 5:
-                return True
-            elif self.dx < 0 and self.hitbox.x <= 5:
-                return True
+            velocity = self.dx
+            location = self.hitbox.x
         elif axis == 'y':
-            if self.dy > 0 and self.hitbox.y + self.height >= WINDOW_Y - 5:
-                return True
-            elif self.dy < 0 and self.hitbox.y <= 5:
-                return True
+            velocity = self.dy
+            location = self.hitbox.y
+        else:
+            return False
+
+
+        if velocity > 0 and location + PLAYER_DIM >= WINDOW_Y - 10:
+            return True
+        elif velocity < 0 and location <= 10:
+            return True
+        elif location + PLAYER_DIM >= WINDOW_X - 1:
+            return True
+        elif location <= 1:
+            return True
         
         return False
     
@@ -483,31 +478,46 @@ class TrainingData:
         return len(self.data)
 
 
-class LSTM(nn.Module):
+class HivemindLSTM(nn.Module):
     # We will be using an LSTM model in this experiment. This LSTM will control the AI objects.
 
-    def __init__(self, num_layers, input_size, hidden_size, output_size):
-        super(LSTM, self).__init__()
+    def __init__(self, num_layers, input_size, hidden_size, output_size, num_ais):
+        super(HivemindLSTM, self).__init__()
 
-        self.num_layers = num_layers
         self.hidden_size = hidden_size
+        self.num_ais = num_ais
+        self.num_layers = num_layers
 
+        # LSTM used by the AI
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.output_layer = nn.Linear(hidden_size, output_size)
+        self.shared_layer = nn.Linear(hidden_size, hidden_size)
+        self.split_layers = nn.ModuleList([nn.Linear(hidden_size, output_size) for _ in range(num_ais)])
 
-    def forward(self, x, h0=None, c0=None):
+    def forward(self, state, h0=None, c0=None):
         # Input tensor ideas: sequence = [aix, aiy, dx, dy, player_x, player_y, glue_x1, glue_y1, glue_x2, glue_y2, ...]
         # where dx and dy are the player's velocity, player_x and player_y are the player's position,
-        # Input_Tensor = [NUM_SAVED_FRAMES, sequence length]. Where there will be NUM_SAVED_FRAMES amount of sequances in the tensor.
+        # Input_Tensor = [BATCH, NUM_SAVED_FRAMES, sequence length]. Where there will be NUM_SAVED_FRAMES amount of sequances in the tensor.
         # The sequences include the current frame plus the last NUM_SAVED_FRAMES-1 frames.
 
+        # Create Cells if they do not exist
         if (h0 is None):
-            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+            h0 = torch.zeros(self.num_layers, state.size(0), self.hidden_size).to(device)
         if (c0 is None):
-            c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+            c0 = torch.zeros(self.num_layers, state.size(0), self.hidden_size).to(device)
         
-        x, (h0, c0) = self.lstm(x, (h0, c0))
-        x = self.output_layer(x[:, -1, :])
+        # Put the state through the LSTM
+        out, (h0, c0) = self.lstm(state, (h0, c0))
+
+        # Input the output from the LSTM to the shared layer.
+        shared_features = torch.relu(self.shared_layer(out[:, -1, :]))
+
+        # Use the split layers
+        ai_outputs = []
+        for i in range(self.num_ais):
+            ai_q_values = self.split_layers[i](shared_features)
+            ai_outputs.append(ai_q_values)
+
+        ai_output = torch.stack(ai_outputs, dim=1)
         
         h0 = h0.detach()
         c0 = c0.detach()
@@ -525,14 +535,14 @@ class LSTM(nn.Module):
         # action 7 = [0, 1, 1, 0] Going Down + Left
         # action 8 = [0, 1, 0, 1] Going Down + Right
         # where up, down, left, and right are the AI's actions to move. Each variable will be a binary value of 0 or 1/False or True. 
-        return x, h0, c0
+        return ai_output, h0, c0
     
 
-class AIManager:
+class AIHivemindManager: # HIVEMIND TIME!!!
     def __init__(self, num_ais, glues, player):
-        self.policy_model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
-        self.policy_model = self.load_model()
-        self.target_model = LSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE).to(device)
+        self.policy_model = HivemindLSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE, num_ais).to(device)
+        # self.policy_model = self.load_model()
+        self.target_model = HivemindLSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE, num_ais).to(device)
         self.target_model.load_state_dict(self.policy_model.state_dict())
         self.optimizer = torch.optim.Adam(self.policy_model.parameters(), lr=LEARNING_RATE)
         self.glues = glues
@@ -542,7 +552,9 @@ class AIManager:
         self.loss_fn = nn.SmoothL1Loss()
         self.frame_count = 0
         self.data_manager = TrainingData(max_length=3600)
-        self.epsilon = 0.0
+        self.epsilon = 1
+        self.previous_memory = None
+        self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32)
 
     def create_ais(self, num_ais):
         ais = []
@@ -557,19 +569,34 @@ class AIManager:
                 ))
         return ais
     
-    def update_memory(self, ai):
+    def add_frame_to_memory(self, frame):
+        self.memory = self.memory.to("cpu")
+
+        for i in range(NUM_SAVED_FRAMES):
+            if ((self.memory[NUM_SAVED_FRAMES - (i+1)] == torch.zeros(SEQUENCE_LENGTH, dtype=torch.float32)).sum().item() == SEQUENCE_LENGTH):
+                self.memory[NUM_SAVED_FRAMES - (i+1)] = frame
+                return
+        
+        self.memory = torch.cat((self.memory[1 : NUM_SAVED_FRAMES], frame), dim=0)
+        self.memory = self.memory.to(device)
+    
+    def update_memory(self):
         x, y = self.player.get_center()
-        x_ai, y_ai = ai.get_center()
-        X = torch.tensor([
-            x_ai, 
-            y_ai,
-            ai.dx,
-            ai.dy,
+        tensor = torch.tensor([
             x, 
             y,
             self.player.dx,
             self.player.dy
-            ], dtype=torch.float32).to(device)
+            ], dtype=torch.float32)
+        
+        list_ai_info = []
+        for ai in self.ai_list:
+            x, y = ai.get_center()
+            list_ai_info.append(x)
+            list_ai_info.append(y)
+            list_ai_info.append(ai.dx)
+            list_ai_info.append(ai.dy)
+        ai_tensor = torch.tensor(list_ai_info, dtype=torch.float32)
         
         list_glues_location = []
         for glue in self.glues:
@@ -577,10 +604,10 @@ class AIManager:
             list_glues_location.append(x_glue/WINDOW_X)
             list_glues_location.append(y_glue/WINDOW_Y)
 
-        glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32).to(device)
-        X = torch.cat((X, glue_tensor), dim=0)
-        frame = X.unsqueeze(0).to("cpu")
-        ai.add_frame_to_memory(frame)
+        glue_tensor = torch.tensor(list_glues_location, dtype=torch.float32)
+        tensor = torch.cat((tensor, ai_tensor ,glue_tensor), dim=0)
+        tensor = tensor.unsqueeze(0)
+        self.add_frame_to_memory(tensor)
     
     def move_ais(self):
 
@@ -588,42 +615,55 @@ class AIManager:
         if self.frame_count >= SYNC_MODEL: 
             self.target_model.load_state_dict(self.policy_model.state_dict()) 
 
-        for ai in self.ai_list:
-            q_values, _, _ = self.policy_model(ai.memory.unsqueeze(0).to(device))
-            q_values = q_values.squeeze(0)
-            ai.previous_memory = ai.memory
-            # print(f"\nmemory shape: {ai.memory.shape}")
-            # print(f"Output shape: {q_values.shape}")
-            ai.ai_move(q_values, self.epsilon)
+        q_values, _, _ = self.policy_model(self.memory.unsqueeze(0).to(device))
+        q_values = q_values.squeeze(0)
+        self.previous_memory = self.memory
+        for ai_index, ai in enumerate(self.ai_list):
+            individual_q_value = q_values[ai_index]
+            ai.ai_move(individual_q_value, self.epsilon)
 
-    def save_data(self, ai):
-        # Create Rewards
+    def calculate_reward(self):
+
         reward = 0
-        if ai.in_glue:
-            reward -= 0.5
-        if ai.touching_player:
-            reward += 1.0
-        if ai.moving_into_wall(axis='x'):
-            reward -= 0.1
-        if ai.moving_into_wall(axis='y'):
-            reward -= 0.1
-        if ai.moving_towards_player(self.player, axis='x') and not ai.in_glue:
-            reward += 0.1
-        if ai.moving_towards_player(self.player, axis='y') and not ai.in_glue:
-            reward += 0.1
-        if ai.nearby_player(self.player) and not ai.in_glue:
-            reward += 0.2
+        for ai in self.ai_list:
+            if ai.in_glue:
+                reward -= 0.5
+            if ai.touching_player:
+                reward += 1.0
+            if ai.moving_into_wall(axis='x'):
+                reward -= 0.1
+            if ai.moving_into_wall(axis='y'):
+                reward -= 0.1
+            if ai.moving_towards_player(self.player, axis='x') and not ai.in_glue:
+                reward += 0.1
+            if ai.moving_towards_player(self.player, axis='y') and not ai.in_glue:
+                reward += 0.1
+            if ai.nearby_player(self.player) and not ai.in_glue:
+                reward += 0.2
+            ai.in_glue = False
 
-        reward -= 0.01 # Small punishment for loss of time.
+        # Increases reward if multiple AIs are touching the player
+        num_ais_touching_player = sum([1 for ai in self.ai_list if ai.touching_player])
+        if num_ais_touching_player > 1:
+            reward += num_ais_touching_player * .5
 
-        self.data_manager.append((ai.previous_memory, ai.action, ai.memory, reward))
+        return reward
 
-    def train_ai(self, ai):
+    def save_data(self):
+        # Create Rewards
+        reward = self.calculate_reward()
+
+        # Select actions
+        actions = [ai.action for ai in self.ai_list]
+
+        self.data_manager.append((self.previous_memory, actions, self.memory, reward))
+
+    def train_ai(self):
 
         batch = self.data_manager.get_sample(BATCH_SIZE)
 
-        actions = [batch[i][1] for i in range(len(batch))]
-        rewards = torch.tensor([batch[i][3] for i in range(len(batch))])
+        actions = torch.tensor([batch[i][1] for i in range(len(batch))])
+        rewards = torch.tensor([batch[i][3] for i in range(len(batch))]).to(device)
 
         states = [batch[i][0].to(device) for i in range(len(batch))]
         states = torch.stack(states, dim=0)
@@ -634,15 +674,40 @@ class AIManager:
         q_values, _, _ = self.policy_model(states)
 
         with torch.no_grad():
+            # Get nex q values from target model
             next_q, _, _ = self.target_model(new_states)
-            max_next_q = next_q.max(1)[0]
-            targets = torch.FloatTensor(rewards + DISCOUNT_FACTOR * max_next_q.to("cpu"))
+            # Get the max split q_values for each AI object
+            split_max_next_q = next_q.max(dim=2)[0]
+            # Merge the different q_values from each AI into one q_value per batch
+            collective_max_next_q = split_max_next_q.mean(dim=1)
+            # Calculate the Target using the collective max q values. This will be used for training.
+            if device == "cuda":
+                targets = torch.cuda.FloatTensor(rewards + DISCOUNT_FACTOR * collective_max_next_q)
+            else:
+                targets = torch.FloatTensor(rewards + DISCOUNT_FACTOR * collective_max_next_q)
 
-        q_value_to_action = torch.stack([q_values[i][actions[i]] for i in range(len(batch))])
+        total_loss = 0
 
+        for ai_index in range(NUM_AI_OBJECTS):
+            # Get individual Q_values for each AI object
+            q_values_for_ai = q_values[:, ai_index, :]
+            actions_for_ai = actions[:, ai_index]
+
+            # Match Q_values to the chosen action.
+            q_values_to_action = torch.stack([q_values_for_ai[i][actions_for_ai[i]] for i in range(len(batch))])
+
+            # Calculate loss using targets and individual AI q_values
+            individual_loss = self.loss_fn(q_values_to_action, targets)
+            total_loss += individual_loss
+
+        # Average the total_loss.
+        total_loss /= NUM_AI_OBJECTS
+
+        # Optimize the model
         self.optimizer.zero_grad()
-        loss = self.loss_fn(q_value_to_action, targets.to(device))
-        loss.backward()
+        total_loss.backward()
+        # Preventing exploding Gradients (:
+        torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), 1.0)
         self.optimizer.step()
 
     def load_model(self):
@@ -687,7 +752,7 @@ def game_end(ai_manager):
         print(f"\nRandom Moves: {ai.random_action} | Ai Move: {ai.ai_action}\n")
     try:
         new_epsilon = (ai_manager.epsilon - ai_manager.epsilon/EPSILON_DECAY) # This code does nothing for now. 
-        ai_manager.save_model()
+        # ai_manager.save_model()
         previous_time = pygame.time.get_ticks()
         main()
     except RecursionError:
@@ -724,7 +789,7 @@ def main():
     for _ in range(GLUES):
         glue = Glue(GLUE_DIM, GLUE_DIM, window, YELLOW, [player]+glues, distance=GLUE_DIM)
         glues.append(glue)
-    ai_manager = AIManager(NUM_AI_OBJECTS, glues, player)
+    ai_manager = AIHivemindManager(NUM_AI_OBJECTS, glues, player)
 
     # Game loop, YIPPEEEEEEE
     while running:
@@ -766,11 +831,10 @@ def main():
             running = False
 
         # Saved the changes made to the enviorment, Save the needed information for training, Then Train the AI.
-        for ai in ai_manager.ai_list:
-            ai_manager.update_memory(ai)
-            ai_manager.save_data(ai)
-            if num_frames >= BATCH_SIZE:
-                ai_manager.train_ai(ai)
+        ai_manager.update_memory()
+        ai_manager.save_data()
+        if num_frames >= BATCH_SIZE:
+            ai_manager.train_ai()
 
         draw_game(player, glues, current_time - previous_time, ai_manager)
         num_frames += 1
