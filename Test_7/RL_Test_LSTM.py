@@ -7,8 +7,8 @@
 # 2: Add an RL based method of learning for the AI. Such as using rewards and policy and target model. (DONE)
 # 3: Add experiance replay for the better training of the AI. (Also save the data for future training?)  (DONE)
 # 4: Implement the Epsilon Greedy Policy with the utilization of the random move function (Or another). (DONE)
-# 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently. (DONE?)
-# 6: Change the saving method to be compatible with the changed made in 3-5. 
+# 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently. (DONE)
+# 6: Change the saving method to be compatible with the changed made in 3-5. (Done?)
 # 7: Get happy... (Impossible)
 
 import torch
@@ -16,6 +16,7 @@ import sys
 import os
 import pygame
 import random
+import json
 from torch import nn
 from collections import deque
 
@@ -46,18 +47,28 @@ NUM_LAYERS = 4
 HIDDEN_SIZE = 64
 OUTPUT_SIZE = 9
 SAVE_FOLDER = "RL_LSTM_Models"
-TEXT_FILE = SAVE_FOLDER + "/" +"model_numbers.txt"
+INFO_FILE = SAVE_FOLDER + "/" +"model_info.json"
 LEARNING_RATE = 0.001
-NUM_AI_OBJECTS = 2 # Do not change till compatibility is introduced.
+NUM_AI_OBJECTS = 2
 NUM_SAVED_FRAMES = 20
 SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
 SYNC_MODEL = 10
 BATCH_SIZE = 32
+EPSILON_ACTIVE = True # Determines if epsilon is active
 EPSILON_DECAY = 100 # How many episodes or "games" the ai plays until epsilon is 0.
+AI_SAVE_DATA = {
+    "Model": [],
+    "Ais": [],
+    "Glues": [],
+    "Hidden": [],
+    "Frames": [],
+    "Layers": [],
+    "Epsilon": []
+}
 
-
+# Other important stuff
 device = "cuda" if torch.cuda.is_available() else "cpu"
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
 previous_time = 0
@@ -331,7 +342,7 @@ class AI(Object):
     def ai_move(self, ai_output, epsilon):
 
         # Epsilon greedy (Might move to AIManager)
-        if random.random() <= epsilon:
+        if random.random() <= epsilon and EPSILON_ACTIVE:
             self.action = random.randint(0, 8)
             self.random_action += 1
         else:
@@ -541,7 +552,10 @@ class HivemindLSTM(nn.Module):
 class AIHivemindManager: # HIVEMIND TIME!!!
     def __init__(self, num_ais, glues, player):
         self.policy_model = HivemindLSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE, num_ais).to(device)
-        # self.policy_model = self.load_model()
+        self.ai_save_data = None
+        self.model_number = None
+        self.epsilon = 1
+        self.load_model()
         self.target_model = HivemindLSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE, num_ais).to(device)
         self.target_model.load_state_dict(self.policy_model.state_dict())
         self.optimizer = torch.optim.Adam(self.policy_model.parameters(), lr=LEARNING_RATE)
@@ -552,7 +566,6 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         self.loss_fn = nn.SmoothL1Loss()
         self.frame_count = 0
         self.data_manager = TrainingData(max_length=3600)
-        self.epsilon = 1
         self.previous_memory = None
         self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32)
 
@@ -715,32 +728,73 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         # If not the function will create a new model and save its input shape so it can be saved and used in the future.
 
         # Check if model exists
-        with open(TEXT_FILE, "r") as f:
-            lines = f.readlines()
-            for line in lines:
-                split = line.split()
-                if (int(split[0]) == INPUT_SHAPE[0]) and (int(split[1]) == INPUT_SHAPE[1]):
-                    self.policy_model.load_state_dict(torch.load(SAVE_FOLDER + "/" + "model" + "_" + split[0] + "_" + split[1] + ".pth"))
-                    print(f"Loaded model_{INPUT_SHAPE} successfully.")
-                    return self.policy_model
+
+        with open(INFO_FILE, 'r') as f:
+            self.ai_save_data = json.load(f)
         
-        # If model does not exist save the new model to the txt file.
-        with open(TEXT_FILE, "a") as f:
-            f.write(f"{INPUT_SHAPE[0]} {INPUT_SHAPE[1]}\n")
-            print(f"model_{INPUT_SHAPE} does not exist and thus cannot be found. Now creating a new model")
-            return self.policy_model
+        empty = self.match_model()
+
+        if self.model_number == None:
+            print("Model not found. Creating a new one!")
+            if empty:
+                self.ai_save_data["Model"].append(1)
+                self.model_number = 1
+            else:
+                self.ai_save_data["Model"].append(self.ai_save_data["Model"][len(self.ai_save_data["Model"]-1) + 1])
+            self.ai_save_data["Ais"].append(NUM_AI_OBJECTS)
+            self.ai_save_data["Glues"].append(GLUES)
+            self.ai_save_data["Hidden"].append(HIDDEN_SIZE)
+            self.ai_save_data["Frames"].append(NUM_SAVED_FRAMES)
+            self.ai_save_data["Layers"].append(NUM_LAYERS)
+            self.ai_save_data["Epsilon"].append(1)
+            return
+        
+        print(f"Found model {self.model_number}, Now loading model...")
+        model_dir = SAVE_FOLDER + '/model_' + str(self.model_number) + ".pth"
+        save_dict = torch.load(model_dir)
+        self.policy_model.load_state_dict(save_dict)
+        print(f"Model {self.model_number} successfully loaded!")
+
+
+    def match_model(self):
+
+        if len(self.ai_save_data["Model"]) == 0:
+            return True
+        
+        for i in range(len(self.ai_save_data["Model"])):
+            ais = self.ai_save_data["Ais"][i] == NUM_AI_OBJECTS
+            glues = self.ai_save_data["Glues"][i] == GLUES
+            hidden = self.ai_save_data["Hidden"][i] == HIDDEN_SIZE
+            frames = self.ai_save_data["Frames"][i] == NUM_SAVED_FRAMES
+            layers = self.ai_save_data["Layers"][i] == NUM_LAYERS
+
+            if ais and glues and hidden and frames and layers:
+                self.model_number = self.ai_save_data["Model"][i]
+                self.epsilon = self.ai_save_data["Epsilon"][i]
+                break
+
+        return False
         
     def save_model(self):
         # Saves the model 
-        torch.save(self.policy_model.state_dict(), SAVE_FOLDER + "/" + "model_" + str(INPUT_SHAPE[0]) + "_" + str(INPUT_SHAPE[1]) + ".pth")
-        print(f"Model {INPUT_SHAPE} saved successfully.")
+
+        with open(INFO_FILE, 'w') as f:
+            json.dump(self.ai_save_data, f)
+
+        print("Saving model")
+        torch.save(self.policy_model.state_dict(), SAVE_FOLDER + "/" + "model_" + str(self.model_number) + ".pth")
+        print(f"Model {self.model_number} saved successfully.")
 
 
 def check_for_folder():
+    # Creates AI save directory and JSON file if one is not present.
+
     if not os.path.isdir(SAVE_FOLDER):
         os.mkdir(SAVE_FOLDER)
-    if not os.path.isfile(TEXT_FILE):
-        open(TEXT_FILE, "x")
+    if not os.path.isfile(INFO_FILE):
+        open(INFO_FILE, "x")
+        with open(INFO_FILE, "w") as f:
+            json.dump(AI_SAVE_DATA, f)
 
 
 def game_end(ai_manager):
@@ -751,8 +805,11 @@ def game_end(ai_manager):
     for ai in ai_manager.ai_list:
         print(f"\nRandom Moves: {ai.random_action} | Ai Move: {ai.ai_action}\n")
     try:
-        new_epsilon = (ai_manager.epsilon - ai_manager.epsilon/EPSILON_DECAY) # This code does nothing for now. 
-        # ai_manager.save_model()
+        new_epsilon = (ai_manager.epsilon - ai_manager.epsilon/EPSILON_DECAY)
+
+        ai_manager.ai_save_data["Epsilon"][ai_manager.model_number - 1] = new_epsilon
+
+        ai_manager.save_model()
         previous_time = pygame.time.get_ticks()
         main()
     except RecursionError:
@@ -848,3 +905,4 @@ def main():
 if __name__ == "__main__":
     check_for_folder()
     main()
+
