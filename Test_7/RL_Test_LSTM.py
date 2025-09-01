@@ -3,12 +3,12 @@
 # After the Hivemind has been created. Then I shall remake the model saving in order to work with the current changes (Step 6)
 
 # Todo: 
-# 1: Reorganize code using the new AIManager class (DONE)
-# 2: Add an RL based method of learning for the AI. Such as using rewards and policy and target model. (DONE)
-# 3: Add experiance replay for the better training of the AI. (Also save the data for future training?)  (DONE)
-# 4: Implement the Epsilon Greedy Policy with the utilization of the random move function (Or another). (DONE)
-# 5: Add the AIs being able to know about each other and the LSTM putting a single output for all AI objects rather than how it is currently. (DONE)
-# 6: Change the saving method to be compatible with the changed made in 3-5. (Done?)
+# 1: Minor improvements: AI Input generalization , Removal of recursive loop , Optimzation of device managerment, and model saving fix. (Done)
+# 2: Add better positive rewards for the AI such as when the AI closes the distance between the player and AI. (Done)
+# 3: Change the summing all of the Q_values during training to training each AI separately.
+# 4: Add the saving of H0 and C0 in AIManager.
+# 5: Add AI collisions. 
+# 6: Add model progress tracking with TensorBoard and/or Matplotlib.
 # 7: Get happy... (Impossible)
 
 import torch
@@ -21,6 +21,7 @@ from torch import nn
 from collections import deque
 
 # Game constants
+MAX_EPISODES = 1000
 WINDOW_X, WINDOW_Y = 1500, 750
 TIME_LIMIT = 60000
 BLACK = (0, 0, 0)
@@ -48,8 +49,8 @@ HIDDEN_SIZE = 64
 OUTPUT_SIZE = 9
 SAVE_FOLDER = "RL_LSTM_Models"
 INFO_FILE = SAVE_FOLDER + "/" +"model_info.json"
-LEARNING_RATE = 0.001
-NUM_AI_OBJECTS = 2
+LEARNING_RATE = 0.0001
+NUM_AI_OBJECTS = 1
 NUM_SAVED_FRAMES = 20
 SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
@@ -75,6 +76,7 @@ previous_time = 0
 pygame.init()
 pygame.font.init()
 font = pygame.font.SysFont("New Roman", 30)
+# episode_count = 0
 
 
 class Object:
@@ -250,12 +252,17 @@ class Player(Object):
         self.contacted_object = False
         self.objects = []
         self.remove_objects_timer = 0
+        self.previous_y = None
+        self.previous_x = None
 
     def player_move(self, current_time):
         # Player movement using WASD keys. The player can move in all directions and has a maximum velocity.
 
         keys = pygame.key.get_pressed()
         # Checking for key clicks and adding the proper acceleration to the velocity.
+
+        self.previous_x, self.previous_y = self.get_center()
+
         if keys[pygame.K_w]:
             self.dy -= ACCELERATION
             self.override = True
@@ -334,6 +341,8 @@ class AI(Object):
         self.timer = 0
         self.change_direction_timer = 0
         self.action = None
+        self.previous_x = None
+        self.previous_y = None
 
         # Debug variables
         self.random_action = 0
@@ -348,6 +357,8 @@ class AI(Object):
         else:
             self.action = torch.argmax(ai_output)
             self.ai_action += 1
+        
+        self.previous_x, self.previous_y = self.get_center()
 
         # Moving the AI using the action    
         directional_vector = self.get_directional_vector()
@@ -567,7 +578,7 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         self.frame_count = 0
         self.data_manager = TrainingData(max_length=3600)
         self.previous_memory = None
-        self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32)
+        self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32).to(device)
 
     def create_ais(self, num_ais):
         ais = []
@@ -583,32 +594,31 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         return ais
     
     def add_frame_to_memory(self, frame):
-        self.memory = self.memory.to("cpu")
+        frame = frame.to(device)
 
         for i in range(NUM_SAVED_FRAMES):
-            if ((self.memory[NUM_SAVED_FRAMES - (i+1)] == torch.zeros(SEQUENCE_LENGTH, dtype=torch.float32)).sum().item() == SEQUENCE_LENGTH):
+            if ((self.memory[NUM_SAVED_FRAMES - (i+1)] == torch.zeros(SEQUENCE_LENGTH, dtype=torch.float32).to(device)).sum().item() == SEQUENCE_LENGTH):
                 self.memory[NUM_SAVED_FRAMES - (i+1)] = frame
                 return
         
         self.memory = torch.cat((self.memory[1 : NUM_SAVED_FRAMES], frame), dim=0)
-        self.memory = self.memory.to(device)
     
     def update_memory(self):
         x, y = self.player.get_center()
         tensor = torch.tensor([
-            x, 
-            y,
-            self.player.dx,
-            self.player.dy
+            x/WINDOW_X, 
+            y/WINDOW_Y,
+            self.player.dx/MAX_VELOCITY,
+            self.player.dy/MAX_VELOCITY
             ], dtype=torch.float32)
         
         list_ai_info = []
         for ai in self.ai_list:
             x, y = ai.get_center()
-            list_ai_info.append(x)
-            list_ai_info.append(y)
-            list_ai_info.append(ai.dx)
-            list_ai_info.append(ai.dy)
+            list_ai_info.append(x/WINDOW_X)
+            list_ai_info.append(y/WINDOW_Y)
+            list_ai_info.append(ai.dx/MAX_VELOCITY)
+            list_ai_info.append(ai.dy/MAX_VELOCITY)
         ai_tensor = torch.tensor(list_ai_info, dtype=torch.float32)
         
         list_glues_location = []
@@ -627,8 +637,7 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         # Sync the Target model with the Policy models after 10 frames. 
         if self.frame_count >= SYNC_MODEL: 
             self.target_model.load_state_dict(self.policy_model.state_dict()) 
-
-        q_values, _, _ = self.policy_model(self.memory.unsqueeze(0).to(device))
+        q_values, _, _ = self.policy_model(self.memory.unsqueeze(0))
         q_values = q_values.squeeze(0)
         self.previous_memory = self.memory
         for ai_index, ai in enumerate(self.ai_list):
@@ -640,19 +649,28 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         reward = 0
         for ai in self.ai_list:
             if ai.in_glue:
-                reward -= 0.5
+                reward -= 0.75
             if ai.touching_player:
-                reward += 1.0
+                reward += 1.5
             if ai.moving_into_wall(axis='x'):
-                reward -= 0.1
+                reward -= 0.2
             if ai.moving_into_wall(axis='y'):
-                reward -= 0.1
+                reward -= 0.2
             if ai.moving_towards_player(self.player, axis='x') and not ai.in_glue:
                 reward += 0.1
             if ai.moving_towards_player(self.player, axis='y') and not ai.in_glue:
                 reward += 0.1
             if ai.nearby_player(self.player) and not ai.in_glue:
                 reward += 0.2
+            if not ai.previous_x == None and not self.player.previous_x == None:
+                ai_x, ai_y = ai.get_center()
+                player_x, player_y = self.player.get_center()
+
+                x_difference = (abs(ai.previous_x - self.player.previous_x) - abs(ai_x - player_x))/MAX_VELOCITY
+                y_difference = (abs(ai.previous_y - self.player.previous_y) - abs(ai_y - player_y))/MAX_VELOCITY
+
+                reward += (x_difference + y_difference)/2
+                
             ai.in_glue = False
 
         # Increases reward if multiple AIs are touching the player
@@ -678,10 +696,10 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         actions = torch.tensor([batch[i][1] for i in range(len(batch))])
         rewards = torch.tensor([batch[i][3] for i in range(len(batch))]).to(device)
 
-        states = [batch[i][0].to(device) for i in range(len(batch))]
+        states = [batch[i][0]for i in range(len(batch))]
         states = torch.stack(states, dim=0)
 
-        new_states = [batch[i][2].to(device) for i in range(len(batch))]
+        new_states = [batch[i][2] for i in range(len(batch))]
         new_states = torch.stack(new_states, dim=0)
 
         q_values, _, _ = self.policy_model(states)
@@ -740,7 +758,8 @@ class AIHivemindManager: # HIVEMIND TIME!!!
                 self.ai_save_data["Model"].append(1)
                 self.model_number = 1
             else:
-                self.ai_save_data["Model"].append(self.ai_save_data["Model"][len(self.ai_save_data["Model"]-1) + 1])
+                self.model_number = max(self.ai_save_data["Model"]) + 1
+                self.ai_save_data["Model"].append(self.model_number)
             self.ai_save_data["Ais"].append(NUM_AI_OBJECTS)
             self.ai_save_data["Glues"].append(GLUES)
             self.ai_save_data["Hidden"].append(HIDDEN_SIZE)
@@ -800,20 +819,14 @@ def check_for_folder():
 def game_end(ai_manager):
     global previous_time
 
-    print("WHY")
-
     for ai in ai_manager.ai_list:
-        print(f"\nRandom Moves: {ai.random_action} | Ai Move: {ai.ai_action}\n")
-    try:
-        new_epsilon = (ai_manager.epsilon - ai_manager.epsilon/EPSILON_DECAY)
+        print(f"AI: Random Moves: {ai.random_action} | Ai Move: {ai.ai_action}\n")
+    new_epsilon = (ai_manager.epsilon - ai_manager.epsilon/EPSILON_DECAY)
 
-        ai_manager.ai_save_data["Epsilon"][ai_manager.model_number - 1] = new_epsilon
+    ai_manager.ai_save_data["Epsilon"][ai_manager.model_number - 1] = new_epsilon
 
-        ai_manager.save_model()
-        previous_time = pygame.time.get_ticks()
-        main()
-    except RecursionError:
-        print("RecursionError: Too many recursions. Program will now exit.")
+    ai_manager.save_model()
+    previous_time = pygame.time.get_ticks()
 
 
 def draw_game(player, glues, time, ai_manager):
@@ -838,6 +851,7 @@ def draw_game(player, glues, time, ai_manager):
 
 def main():
     sys.setrecursionlimit(100000)
+    end = False
     num_frames = 0
     running = True
     clock = pygame.time.Clock()
@@ -853,7 +867,11 @@ def main():
         current_time = pygame.time.get_ticks()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                # episode_count += 1
+                # print(f"Number of Episodes: {episode_count}.")
+                game_end(ai_manager)
                 running = False
+                end = True
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     # Reset the game if the space key is pressed.
@@ -896,13 +914,20 @@ def main():
         draw_game(player, glues, current_time - previous_time, ai_manager)
         num_frames += 1
         clock.tick(60)
-
-
-    ai_manager.save_model()
-    pygame.quit()
+    
+    return not end
 
 
 if __name__ == "__main__":
+    episodes = 0
+    run = True
     check_for_folder()
-    main()
+    while run:
+        run = main()
+        episodes += 1
+        if episodes >= MAX_EPISODES:
+            run = False
 
+    print(f"Number of Episodes: {episodes}")
+
+    pygame.quit()
