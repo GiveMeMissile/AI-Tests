@@ -5,7 +5,7 @@
 # Todo: 
 # 1: Minor improvements: AI Input generalization , Removal of recursive loop , Optimzation of device managerment, and model saving fix. (Done)
 # 2: Add better positive rewards for the AI such as when the AI closes the distance between the player and AI. (Done)
-# 3: Change the summing all of the Q_values during training to training each AI separately.
+# 3: Change the summing all of the Q_values during training to training each AI separately. (Done?)
 # 4: Add the saving of H0 and C0 in AIManager.
 # 5: Add AI collisions. 
 # 6: Add model progress tracking with TensorBoard and/or Matplotlib.
@@ -50,7 +50,7 @@ OUTPUT_SIZE = 9
 SAVE_FOLDER = "RL_LSTM_Models"
 INFO_FILE = SAVE_FOLDER + "/" +"model_info.json"
 LEARNING_RATE = 0.0001
-NUM_AI_OBJECTS = 1
+NUM_AI_OBJECTS = 3
 NUM_SAVED_FRAMES = 20
 SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
@@ -58,7 +58,7 @@ DISCOUNT_FACTOR = 0.9
 SYNC_MODEL = 10
 BATCH_SIZE = 32
 EPSILON_ACTIVE = True # Determines if epsilon is active
-EPSILON_DECAY = 100 # How many episodes or "games" the ai plays until epsilon is 0.
+EPSILON_DECAY = 300 # How many episodes/games the ai plays until epsilon is 0.
 AI_SAVE_DATA = {
     "Model": [],
     "Ais": [],
@@ -68,6 +68,15 @@ AI_SAVE_DATA = {
     "Layers": [],
     "Epsilon": []
 }
+
+# AI Reward values
+GLOBAL_DIVIDE = 10
+PLAYER_CONTACT = 1.5
+GLUE_CONTACT = -.75
+WALL_CONTACT = -.2
+MOVING_TOWARDS_PLAYER = .3
+PLAYER_NEARBY = .4
+
 
 # Other important stuff
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -646,22 +655,31 @@ class AIHivemindManager: # HIVEMIND TIME!!!
 
     def calculate_reward(self):
 
-        reward = 0
-        for ai in self.ai_list:
+        rewards = torch.zeros(len(self.ai_list))
+        global_reward = 0
+        for i, ai in enumerate(self.ai_list):
+            reward = 0
             if ai.in_glue:
-                reward -= 0.75
+                reward += GLUE_CONTACT
+                global_reward += GLUE_CONTACT / (GLOBAL_DIVIDE*len(self.ai_list))
             if ai.touching_player:
-                reward += 1.5
+                reward += PLAYER_CONTACT
+                global_reward += PLAYER_CONTACT / (GLOBAL_DIVIDE*len(self.ai_list))
             if ai.moving_into_wall(axis='x'):
-                reward -= 0.2
+                reward += WALL_CONTACT
+                global_reward += WALL_CONTACT / (GLOBAL_DIVIDE*len(self.ai_list))
             if ai.moving_into_wall(axis='y'):
-                reward -= 0.2
+                reward += WALL_CONTACT
+                global_reward += WALL_CONTACT / (GLOBAL_DIVIDE*len(self.ai_list))
             if ai.moving_towards_player(self.player, axis='x') and not ai.in_glue:
-                reward += 0.1
+                reward += MOVING_TOWARDS_PLAYER
+                global_reward += MOVING_TOWARDS_PLAYER / (GLOBAL_DIVIDE*len(self.ai_list))
             if ai.moving_towards_player(self.player, axis='y') and not ai.in_glue:
-                reward += 0.1
+                reward += MOVING_TOWARDS_PLAYER
+                global_reward += MOVING_TOWARDS_PLAYER / (GLOBAL_DIVIDE*len(self.ai_list))
             if ai.nearby_player(self.player) and not ai.in_glue:
-                reward += 0.2
+                reward += PLAYER_NEARBY
+                global_reward += PLAYER_NEARBY / (GLOBAL_DIVIDE*len(self.ai_list))
             if not ai.previous_x == None and not self.player.previous_x == None:
                 ai_x, ai_y = ai.get_center()
                 player_x, player_y = self.player.get_center()
@@ -672,13 +690,17 @@ class AIHivemindManager: # HIVEMIND TIME!!!
                 reward += (x_difference + y_difference)/2
                 
             ai.in_glue = False
+            rewards[i] = reward
 
         # Increases reward if multiple AIs are touching the player
         num_ais_touching_player = sum([1 for ai in self.ai_list if ai.touching_player])
         if num_ais_touching_player > 1:
-            reward += num_ais_touching_player * .5
+            rewards += num_ais_touching_player * .5
 
-        return reward
+        # Adds team success/failiure
+        rewards += global_reward
+
+        return rewards
 
     def save_data(self):
         # Create Rewards
@@ -693,8 +715,8 @@ class AIHivemindManager: # HIVEMIND TIME!!!
 
         batch = self.data_manager.get_sample(BATCH_SIZE)
 
-        actions = torch.tensor([batch[i][1] for i in range(len(batch))])
-        rewards = torch.tensor([batch[i][3] for i in range(len(batch))]).to(device)
+        actions = torch.tensor([batch[i][1] for i in range(len(batch))]).to(device)
+        rewards = torch.stack([batch[i][3] for i in range(len(batch))]).to(device)
 
         states = [batch[i][0]for i in range(len(batch))]
         states = torch.stack(states, dim=0)
@@ -705,17 +727,12 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         q_values, _, _ = self.policy_model(states)
 
         with torch.no_grad():
-            # Get nex q values from target model
+            # Get next q values from target model
             next_q, _, _ = self.target_model(new_states)
             # Get the max split q_values for each AI object
-            split_max_next_q = next_q.max(dim=2)[0]
-            # Merge the different q_values from each AI into one q_value per batch
-            collective_max_next_q = split_max_next_q.mean(dim=1)
-            # Calculate the Target using the collective max q values. This will be used for training.
-            if device == "cuda":
-                targets = torch.cuda.FloatTensor(rewards + DISCOUNT_FACTOR * collective_max_next_q)
-            else:
-                targets = torch.FloatTensor(rewards + DISCOUNT_FACTOR * collective_max_next_q)
+            next_q_max = next_q.max(dim=2)[0]
+            # Calculate the Target using the split max q values. This will be used for training.
+            targets = rewards + DISCOUNT_FACTOR * next_q_max 
 
         total_loss = 0
 
@@ -723,12 +740,13 @@ class AIHivemindManager: # HIVEMIND TIME!!!
             # Get individual Q_values for each AI object
             q_values_for_ai = q_values[:, ai_index, :]
             actions_for_ai = actions[:, ai_index]
+            target_for_ai = targets[:, ai_index]
 
             # Match Q_values to the chosen action.
             q_values_to_action = torch.stack([q_values_for_ai[i][actions_for_ai[i]] for i in range(len(batch))])
 
             # Calculate loss using targets and individual AI q_values
-            individual_loss = self.loss_fn(q_values_to_action, targets)
+            individual_loss = self.loss_fn(q_values_to_action, target_for_ai)
             total_loss += individual_loss
 
         # Average the total_loss.
@@ -737,7 +755,6 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         # Optimize the model
         self.optimizer.zero_grad()
         total_loss.backward()
-        # Preventing exploding Gradients (:
         torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), 1.0)
         self.optimizer.step()
 
@@ -821,7 +838,7 @@ def game_end(ai_manager):
 
     for ai in ai_manager.ai_list:
         print(f"AI: Random Moves: {ai.random_action} | Ai Move: {ai.ai_action}\n")
-    new_epsilon = (ai_manager.epsilon - ai_manager.epsilon/EPSILON_DECAY)
+    new_epsilon = (ai_manager.epsilon - 1/EPSILON_DECAY)
 
     ai_manager.ai_save_data["Epsilon"][ai_manager.model_number - 1] = new_epsilon
 
