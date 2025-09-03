@@ -5,7 +5,7 @@
 # Todo: 
 # 1: Minor improvements: AI Input generalization , Removal of recursive loop , Optimzation of device managerment, and model saving fix. (Done)
 # 2: Add better positive rewards for the AI such as when the AI closes the distance between the player and AI. (Done)
-# 3: Change the summing all of the Q_values during training to training each AI separately. (Done?)
+# 3: Change the summing all of the Q_values during training to training each AI separately. (Done)
 # 4: Add the saving of H0 and C0 in AIManager.
 # 5: Add AI collisions. 
 # 6: Add model progress tracking with TensorBoard and/or Matplotlib.
@@ -31,7 +31,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 10
+GLUES = 0
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -55,7 +55,7 @@ NUM_SAVED_FRAMES = 20
 SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
-SYNC_MODEL = 10
+SYNC_MODEL = 30
 BATCH_SIZE = 32
 EPSILON_ACTIVE = True # Determines if epsilon is active
 EPSILON_DECAY = 300 # How many episodes/games the ai plays until epsilon is 0.
@@ -588,6 +588,10 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         self.data_manager = TrainingData(max_length=3600)
         self.previous_memory = None
         self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32).to(device)
+        self.h0 = None
+        self.c0 = None
+        self.previous_h0 = None
+        self.previous_c0 = None
 
     def create_ais(self, num_ais):
         ais = []
@@ -645,8 +649,9 @@ class AIHivemindManager: # HIVEMIND TIME!!!
 
         # Sync the Target model with the Policy models after 10 frames. 
         if self.frame_count >= SYNC_MODEL: 
-            self.target_model.load_state_dict(self.policy_model.state_dict()) 
-        q_values, _, _ = self.policy_model(self.memory.unsqueeze(0))
+            self.target_model.load_state_dict(self.policy_model.state_dict())
+        self.previous_h0, self.previous_c0 = self.h0, self.c0
+        q_values, self.h0, self.c0 = self.policy_model(self.memory.unsqueeze(0), self.h0, self.c0)
         q_values = q_values.squeeze(0)
         self.previous_memory = self.memory
         for ai_index, ai in enumerate(self.ai_list):
@@ -704,31 +709,51 @@ class AIHivemindManager: # HIVEMIND TIME!!!
 
     def save_data(self):
         # Create Rewards
+        if self.previous_h0 is None or self.previous_c0 is None:
+            return
+        if self.h0 is None or self.c0 is None:
+            return
         reward = self.calculate_reward()
 
         # Select actions
         actions = [ai.action for ai in self.ai_list]
 
-        self.data_manager.append((self.previous_memory, actions, self.memory, reward))
+        self.data_manager.append((
+            self.previous_memory, 
+            actions, 
+            self.memory, 
+            reward, 
+            self.previous_h0,
+            self.previous_c0,
+            self.h0, 
+            self.c0
+            ))
 
     def train_ai(self):
 
         batch = self.data_manager.get_sample(BATCH_SIZE)
 
+        # Get actions and rewrads
         actions = torch.tensor([batch[i][1] for i in range(len(batch))]).to(device)
         rewards = torch.stack([batch[i][3] for i in range(len(batch))]).to(device)
 
+        # Get the states and new states.
         states = [batch[i][0]for i in range(len(batch))]
         states = torch.stack(states, dim=0)
-
         new_states = [batch[i][2] for i in range(len(batch))]
         new_states = torch.stack(new_states, dim=0)
 
-        q_values, _, _ = self.policy_model(states)
+        # Get the h0 and the c0 cells
+        h0s = torch.stack([batch[i][4] for i in range(len(batch))], dim=2).to(device).squeeze(dim=1)
+        c0s = torch.stack([batch[i][5] for i in range(len(batch))], dim=2).to(device).squeeze(dim=1)
+        new_h0s = torch.stack([batch[i][6] for i in range(len(batch))], dim=2).to(device).squeeze(dim=1)
+        new_c0s = torch.stack([batch[i][7] for i in range(len(batch))], dim=2).to(device).squeeze(dim=1)
+
+        q_values, _, _ = self.policy_model(states, h0s, c0s)
 
         with torch.no_grad():
             # Get next q values from target model
-            next_q, _, _ = self.target_model(new_states)
+            next_q, _, _ = self.target_model(new_states, new_h0s, new_c0s)
             # Get the max split q_values for each AI object
             next_q_max = next_q.max(dim=2)[0]
             # Calculate the Target using the split max q values. This will be used for training.
