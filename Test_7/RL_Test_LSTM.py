@@ -724,7 +724,8 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         # Adds team success/failiure
         rewards += global_reward
 
-        self.total_rewards = (sum(rewards)/len(rewards)).item()
+        print(f"\nRewards: {rewards} | sum: {sum(rewards).item()} | len: {len(rewards)} | avg: {(sum(rewards)/len(rewards)).item()} | Total: {self.total_rewards}")
+        self.total_rewards += (sum(rewards)/len(rewards)).item()
         self.reward_count += 1
 
         return rewards
@@ -805,7 +806,7 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), 1.0)
         self.optimizer.step()
 
-        self.total_loss = (total_loss.detach().to("cpu")).item()
+        self.total_loss += (total_loss.detach().to("cpu")).item()
         self.loss_count += 1
 
     def load_model(self):
