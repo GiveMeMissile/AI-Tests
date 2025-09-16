@@ -6,7 +6,7 @@
 # 1: Minor improvements: AI Input generalization , Removal of recursive loop , Optimzation of device managerment, and model saving fix. (Done)
 # 2: Add better positive rewards for the AI such as when the AI closes the distance between the player and AI. (Done)
 # 3: Change the summing all of the Q_values during training to training each AI separately. (Done)
-# 4: Add the saving of H0 and C0 in AIManager.
+# 4: Add the saving of H0 and C0 in AIManager. (Done)
 # 5: Add AI collisions. 
 # 6: Add model progress tracking with TensorBoard and/or Matplotlib.
 # 7: Get happy... (Impossible)
@@ -17,6 +17,10 @@ import os
 import pygame
 import random
 import json
+import math
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 from torch import nn
 from collections import deque
 
@@ -31,7 +35,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 0
+GLUES = 5
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -47,10 +51,8 @@ REMOVE_OBJ_TIME = 250
 NUM_LAYERS = 4
 HIDDEN_SIZE = 64
 OUTPUT_SIZE = 9
-SAVE_FOLDER = "RL_LSTM_Models"
-INFO_FILE = SAVE_FOLDER + "/" +"model_info.json"
 LEARNING_RATE = 0.0001
-NUM_AI_OBJECTS = 3
+NUM_AI_OBJECTS = 2
 NUM_SAVED_FRAMES = 20
 SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
@@ -69,13 +71,19 @@ AI_SAVE_DATA = {
     "Epsilon": []
 }
 
+# File Constants
+SAVE_FOLDER = "RL_LSTM_Models"
+INFO_FILE = SAVE_FOLDER + "/" +"model_info.json"
+DATA_FOLDER = "RL_LSTM_Progress_Data"
+
 # AI Reward values
-GLOBAL_DIVIDE = 10
+GLOBAL_DIVIDE = 5
 PLAYER_CONTACT = 1.5
 GLUE_CONTACT = -.75
 WALL_CONTACT = -.2
 MOVING_TOWARDS_PLAYER = .3
 PLAYER_NEARBY = .4
+NO_MOVEMENT = -.5
 
 
 # Other important stuff
@@ -85,7 +93,6 @@ previous_time = 0
 pygame.init()
 pygame.font.init()
 font = pygame.font.SysFont("New Roman", 30)
-# episode_count = 0
 
 
 class Object:
@@ -354,18 +361,19 @@ class AI(Object):
         self.previous_y = None
 
         # Debug variables
-        self.random_action = 0
-        self.ai_action = 0
+        self.action_count = 0
+        self.total_actions = 0
 
     def ai_move(self, ai_output, epsilon):
 
         # Epsilon greedy (Might move to AIManager)
         if random.random() <= epsilon and EPSILON_ACTIVE:
             self.action = random.randint(0, 8)
-            self.random_action += 1
         else:
             self.action = torch.argmax(ai_output)
-            self.ai_action += 1
+
+        self.action_count += 1
+        self.total_actions += self.action
         
         self.previous_x, self.previous_y = self.get_center()
 
@@ -582,16 +590,22 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         self.glues = glues
         self.player = player
         self.ai_list = self.create_ais(num_ais)
-        self.total_reward = 0
         self.loss_fn = nn.SmoothL1Loss()
         self.frame_count = 0
         self.data_manager = TrainingData(max_length=3600)
         self.previous_memory = None
         self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32).to(device)
+
         self.h0 = None
         self.c0 = None
         self.previous_h0 = None
         self.previous_c0 = None
+
+        self.total_loss = 0
+        self.total_rewards = 0
+
+        self.loss_count = 0
+        self.reward_count = 0
 
     def create_ais(self, num_ais):
         ais = []
@@ -685,6 +699,11 @@ class AIHivemindManager: # HIVEMIND TIME!!!
             if ai.nearby_player(self.player) and not ai.in_glue:
                 reward += PLAYER_NEARBY
                 global_reward += PLAYER_NEARBY / (GLOBAL_DIVIDE*len(self.ai_list))
+
+            if ai.dx == 0 and ai.dy == 0:
+                reward += NO_MOVEMENT
+                global_reward += NO_MOVEMENT / (GLOBAL_DIVIDE*len(self.ai_list))
+
             if not ai.previous_x == None and not self.player.previous_x == None:
                 ai_x, ai_y = ai.get_center()
                 player_x, player_y = self.player.get_center()
@@ -704,6 +723,9 @@ class AIHivemindManager: # HIVEMIND TIME!!!
 
         # Adds team success/failiure
         rewards += global_reward
+
+        self.total_rewards = (sum(rewards)/len(rewards)).item()
+        self.reward_count += 1
 
         return rewards
 
@@ -725,7 +747,7 @@ class AIHivemindManager: # HIVEMIND TIME!!!
             reward, 
             self.previous_h0,
             self.previous_c0,
-            self.h0, 
+            self.h0,
             self.c0
             ))
 
@@ -782,6 +804,9 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), 1.0)
         self.optimizer.step()
+
+        self.total_loss = (total_loss.detach().to("cpu")).item()
+        self.loss_count += 1
 
     def load_model(self):
         # This function checks if one of the saved models can be loaded, and if it can the function will load the model.
@@ -844,7 +869,114 @@ class AIHivemindManager: # HIVEMIND TIME!!!
 
         print("Saving model")
         torch.save(self.policy_model.state_dict(), SAVE_FOLDER + "/" + "model_" + str(self.model_number) + ".pth")
-        print(f"Model {self.model_number} saved successfully.")
+        print(f"Model {self.model_number} saved successfully.\n")
+
+
+class ProgressTracker:
+    # Keeps track of important data and displays them at the end.
+
+    data = {
+        "Episodes": [],
+        "Rewards": [],
+        "Actions": [],
+        "Health": [],
+        "Loss": [],
+        "Epsilon": [],
+        "Time": []
+    }
+
+    model_number = None
+
+    def append(self, item, location):
+        try:
+            self.data[location].append(item)
+        except Exception:
+            print("Invalid location, please input a valid location.")
+    
+    def __len__(self):
+        return len(self.data["Episodes"])
+    
+    def calculate_sd(self, data, mean):
+        # Calculate the Mean Absolute Diviation of the Data: sd^2 = (∑((value - mean)^2))/total
+
+        sd = 0
+
+        for value in data:
+            sd += (value - mean)**2
+        
+        sd /= len(data)
+        sd = math.sqrt(sd)
+        return sd
+
+    def calculate_mean(self, data):
+        return sum(data)/len(data)
+
+    def calculate_z_scores(self, data, mean, sd):
+        # Calculate the z_scores of the data, equation: z_score = (value - mean_of_data)/standard deviation
+
+        z_scores = []
+        for value in data:
+            try:
+                z_score = (value-mean)/sd
+            except ZeroDivisionError:
+                z_score = 0
+            z_scores.append(z_score)
+
+        return z_scores
+    
+    def save_as_cvs(self):
+        # Convert any potential tensors to Python numbers
+        cleaned_data = {
+            "Episodes": [float(x) if hasattr(x, 'item') else x for x in self.data["Episodes"]],
+            "Rewards": [float(x) if hasattr(x, 'item') else x for x in self.data["Rewards"]],
+            "Actions": [float(x) if hasattr(x, 'item') else x for x in self.data["Actions"]],
+            "Health": [float(x) if hasattr(x, 'item') else x for x in self.data["Health"]],
+            "Loss": [float(x) if hasattr(x, 'item') else x for x in self.data["Loss"]],
+            "Epsilon": [float(x) if hasattr(x, 'item') else x for x in self.data["Epsilon"]],
+            "Time": [float(x) if hasattr(x, 'item') else x for x in self.data["Time"]]
+        }
+        
+        file_name = DATA_FOLDER + "/" + "model_" + str(self.model_number) + "_data.csv"
+        df = pd.DataFrame(cleaned_data)
+
+        # If no csv file exists for this save, then create a new one and return
+        if not os.path.exists(file_name):
+            df.to_csv(file_name, index=False)
+            return
+        
+        # If there is already a csv file with data in it, then we merge the data
+        old_df = pd.read_csv(file_name)
+        # Fix the concatenation
+        new_df = pd.concat([old_df, df], ignore_index=True)
+        new_df.to_csv(file_name, index=False)
+
+    def graph(self, data, names):
+        # Takes in a list of data and graphs all of the data vs the episodes
+
+        for i in range(len(data)):
+            values = np.array(data[i])
+            plt.plot(self.episodes, values, label = names[i])
+        
+        plt.legend()
+        plt.show()
+            
+
+    def get_info(self, data):
+        mean = self.calculate_mean(data)
+        sd = self.calculate_sd(data, mean)
+        z_scores = self.calculate_z_scores(data, mean, sd)
+        return mean, sd, z_scores
+
+    def graph_results(self):
+        self.episodes = self.data["Episodes"]
+        _, _, r_z_scores = self.get_info(self.data["Rewards"])
+        _, _, h_z_scores = self.get_info(self.data["Health"])
+        _, _, e_z_scores = self.get_info(self.data["Epsilon"])
+        _, _, l_z_scores = self.get_info(self.data["Loss"])
+        _, _, t_z_scores = self.get_info(self.data["Time"])
+        z_score_list = [r_z_scores, h_z_scores, e_z_scores, l_z_scores, t_z_scores]
+        name_list = ["Rewards", "Health", "Epsilon", "Loss", "Time"]
+        self.graph(z_score_list, name_list)
 
 
 def check_for_folder():
@@ -856,19 +988,44 @@ def check_for_folder():
         open(INFO_FILE, "x")
         with open(INFO_FILE, "w") as f:
             json.dump(AI_SAVE_DATA, f)
+    if not os.path.isdir(DATA_FOLDER):
+        os.mkdir(DATA_FOLDER)
 
 
-def game_end(ai_manager):
+def game_end(ai_manager, player, progress_tracker, time):
     global previous_time
 
-    for ai in ai_manager.ai_list:
-        print(f"AI: Random Moves: {ai.random_action} | Ai Move: {ai.ai_action}\n")
     new_epsilon = (ai_manager.epsilon - 1/EPSILON_DECAY)
+    if new_epsilon < 0:
+        new_epsilon = 0
 
     ai_manager.ai_save_data["Epsilon"][ai_manager.model_number - 1] = new_epsilon
-
     ai_manager.save_model()
+
     previous_time = pygame.time.get_ticks()
+
+    # Save Progress to AI
+    rewards = ai_manager.total_rewards/ai_manager.reward_count
+    try:
+        loss = ai_manager.total_loss/ai_manager.loss_count
+    except ZeroDivisionError:
+        loss = 0
+    actions = 0
+    epsilon = ai_manager.epsilon
+    health = player.health
+    time = round((TIME_LIMIT - time)/1000)
+    for ai in ai_manager.ai_list:
+        actions += ai.total_actions/ai.action_count
+
+    actions /= len(ai_manager.ai_list)
+
+    progress_tracker.model_number = ai_manager.model_number
+    progress_tracker.append(time, "Time")
+    progress_tracker.append(rewards, "Rewards")
+    progress_tracker.append(loss, "Loss")
+    progress_tracker.append(epsilon, "Epsilon")
+    progress_tracker.append(health, "Health")
+    progress_tracker.append(actions, "Actions")
 
 
 def draw_game(player, glues, time, ai_manager):
@@ -891,7 +1048,7 @@ def draw_game(player, glues, time, ai_manager):
     pygame.display.flip()
 
 
-def main():
+def main(progress_tracker):
     sys.setrecursionlimit(100000)
     end = False
     num_frames = 0
@@ -909,21 +1066,19 @@ def main():
         current_time = pygame.time.get_ticks()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                # episode_count += 1
-                # print(f"Number of Episodes: {episode_count}.")
-                game_end(ai_manager)
+                game_end(ai_manager, player, progress_tracker, current_time - previous_time)
                 running = False
                 end = True
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     # Reset the game if the space key is pressed.
-                    game_end(ai_manager)
+                    game_end(ai_manager, player, progress_tracker, current_time - previous_time)
                     running = False
                 elif event.key == pygame.K_LSHIFT:
                     player.override = not player.override
 
         if pygame.time.get_ticks()-previous_time >= TIME_LIMIT:
-            game_end(ai_manager)
+            game_end(ai_manager, player, progress_tracker, current_time - previous_time)
             running = False
 
         # AI moves first
@@ -944,7 +1099,7 @@ def main():
 
         player.player_move(current_time)
         if player.health <= 0:
-            game_end(ai_manager)
+            game_end(ai_manager, player, progress_tracker, current_time - previous_time)
             running = False
 
         # Saved the changes made to the enviorment, Save the needed information for training, Then Train the AI.
@@ -961,15 +1116,27 @@ def main():
 
 
 if __name__ == "__main__":
-    episodes = 0
+    progress_tracker = ProgressTracker()
+
+    episodes = 1
     run = True
     check_for_folder()
     while run:
-        run = main()
+        progress_tracker.append(episodes, "Episodes")
+        run = main(progress_tracker)
         episodes += 1
         if episodes >= MAX_EPISODES:
             run = False
+    
+    pygame.quit()
 
     print(f"Number of Episodes: {episodes}")
+    try:
+        progress_tracker.save_as_cvs()
+        print("Pls")
+    except:
+        data = progress_tracker.data
+        print(f"Episodes: {data["Episodes"][0]} | Rewards: {data["Rewards"][0]} | Actions: {data["Actions"][0]}\n")
+        print(f"Health: {data['Health'][0]} | Loss: {data['Loss'][0]} | Epsilon: {data['Epsilon'][0]} | Time: {data['Time'][0]}")
 
-    pygame.quit()
+    progress_tracker.graph_results()
