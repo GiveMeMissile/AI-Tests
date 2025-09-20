@@ -7,8 +7,8 @@
 # 2: Add better positive rewards for the AI such as when the AI closes the distance between the player and AI. (Done)
 # 3: Change the summing all of the Q_values during training to training each AI separately. (Done)
 # 4: Add the saving of H0 and C0 in AIManager. (Done)
-# 5: Add AI collisions. 
-# 6: Add model progress tracking with TensorBoard and/or Matplotlib.
+# 5: Add AI collisions. (Done?)
+# 6: Add model progress tracking with TensorBoard and/or Matplotlib. (Done)
 # 7: Get happy... (Impossible)
 
 import torch
@@ -25,7 +25,7 @@ from torch import nn
 from collections import deque
 
 # Game constants
-MAX_EPISODES = 1000
+MAX_EPISODES = 400
 WINDOW_X, WINDOW_Y = 1500, 750
 TIME_LIMIT = 60000
 BLACK = (0, 0, 0)
@@ -35,7 +35,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 5
+GLUES = 0
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -49,17 +49,18 @@ REMOVE_OBJ_TIME = 250
 
 # AI Constants
 NUM_LAYERS = 4
+COLLISION_TIMER = 500
 HIDDEN_SIZE = 64
 OUTPUT_SIZE = 9
 LEARNING_RATE = 0.0001
-NUM_AI_OBJECTS = 2
+NUM_AI_OBJECTS = 5
 NUM_SAVED_FRAMES = 20
 SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
 SYNC_MODEL = 30
 BATCH_SIZE = 32
-EPSILON_ACTIVE = True # Determines if epsilon is active
+EPSILON_ACTIVE = False # Determines if epsilon is active
 EPSILON_DECAY = 300 # How many episodes/games the ai plays until epsilon is 0.
 AI_SAVE_DATA = {
     "Model": [],
@@ -84,9 +85,12 @@ WALL_CONTACT = -.2
 MOVING_TOWARDS_PLAYER = .3
 PLAYER_NEARBY = .4
 NO_MOVEMENT = -.5
+AI_COLLISION = -1
 
 
 # Other important stuff
+iteration = 0  # Used for data saving and testing purposes.
+data_saving = True
 device = "cuda" if torch.cuda.is_available() else "cpu"
 window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
 previous_time = 0
@@ -350,11 +354,15 @@ class Player(Object):
 class AI(Object):
     # This is the object which the neural network will control. It is the AI which will hunt the player.
 
+    itr = None
+    collided_with_ai = False
+    ai_collision_timer = 0
+    timer = 0
+
     def __init__(self, width, height, window, color, objects, distance, x=None, y=None):
         super().__init__(width, height, window, color, objects, distance, x, y)
         self.in_glue = False
         self.touching_player = False
-        self.timer = 0
         self.change_direction_timer = 0
         self.action = None
         self.previous_x = None
@@ -414,7 +422,7 @@ class AI(Object):
             case 8:
                 return [False, True, False, True]
 
-    def check_for_collisions(self, current_time, player):
+    def check_for_player_collisions(self, current_time, player):
         
         if self.hitbox.colliderect(player.hitbox):
             player.contacted_object = True
@@ -433,6 +441,25 @@ class AI(Object):
             self.dy = old_player_dy/2
             self.timer = current_time
             player.health -= 2
+
+    def check_for_ai_collisions(self, ai_list, current_time):
+        # Checks for collisions between different AI objects and accounts for collision physics.
+
+        for ai in ai_list:
+            if ai == self:
+                continue
+            if self.hitbox.colliderect(ai.hitbox):
+                
+                self.collided_with_ai = True
+                ai.collided_with_ai = True
+
+                if (current_time - self.ai_collision_timer >= COLLISION_TIMER):
+                    self.ai_collision_timer = current_time
+                    old_ai_dx, old_ai_dy = ai.dx, ai.dy
+                    ai.dx = self.dx/2
+                    ai.dy = self.dy/2
+                    self.dx = old_ai_dx/2
+                    self.dy = old_ai_dy/2
 
     def moving_into_wall(self, axis='x'):
         # Checks if the AI is moving into a wall. If it is, it returns True.
@@ -609,15 +636,17 @@ class AIHivemindManager: # HIVEMIND TIME!!!
 
     def create_ais(self, num_ais):
         ais = []
-        for _ in range(num_ais):
-            ais.append(AI(
+        for i in range(num_ais):
+            ai_object = AI(
                 PLAYER_DIM, 
                 PLAYER_DIM, 
                 window, 
                 RED,
                 [self.player] + self.glues,
                 (PLAYER_DIM+GLUE_DIM)/2
-                ))
+                )
+            ai_object.itr = i
+            ais.append(ai_object)
         return ais
     
     def add_frame_to_memory(self, frame):
@@ -671,6 +700,7 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         for ai_index, ai in enumerate(self.ai_list):
             individual_q_value = q_values[ai_index]
             ai.ai_move(individual_q_value, self.epsilon)
+            ai.check_for_ai_collisions(self.ai_list, pygame.time.get_ticks())
 
     def calculate_reward(self):
 
@@ -699,6 +729,10 @@ class AIHivemindManager: # HIVEMIND TIME!!!
             if ai.nearby_player(self.player) and not ai.in_glue:
                 reward += PLAYER_NEARBY
                 global_reward += PLAYER_NEARBY / (GLOBAL_DIVIDE*len(self.ai_list))
+            if ai.collided_with_ai:
+                reward += AI_COLLISION
+                global_reward += AI_COLLISION / (GLOBAL_DIVIDE*len(self.ai_list))
+                ai.collided_with_ai = False
 
             if ai.dx == 0 and ai.dy == 0:
                 reward += NO_MOVEMENT
@@ -724,7 +758,6 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         # Adds team success/failiure
         rewards += global_reward
 
-        print(f"\nRewards: {rewards} | sum: {sum(rewards).item()} | len: {len(rewards)} | avg: {(sum(rewards)/len(rewards)).item()} | Total: {self.total_rewards}")
         self.total_rewards += (sum(rewards)/len(rewards)).item()
         self.reward_count += 1
 
@@ -874,7 +907,7 @@ class AIHivemindManager: # HIVEMIND TIME!!!
 
 
 class ProgressTracker:
-    # Keeps track of important data and displays them at the end.
+    # Keeps track of important data to be displaied and saved them at the end.
 
     data = {
         "Episodes": [],
@@ -887,6 +920,9 @@ class ProgressTracker:
     }
 
     model_number = None
+
+    def __init__(self, iteration):
+        self.iteration = iteration
 
     def append(self, item, location):
         try:
@@ -937,7 +973,7 @@ class ProgressTracker:
             "Time": [float(x) if hasattr(x, 'item') else x for x in self.data["Time"]]
         }
         
-        file_name = DATA_FOLDER + "/" + "model_" + str(self.model_number) + "_data.csv"
+        file_name = DATA_FOLDER + "/" + "model_" + str(self.model_number) + "_" + str(self.iteration) +"_data.csv"
         df = pd.DataFrame(cleaned_data)
 
         # If no csv file exists for this save, then create a new one and return
@@ -996,9 +1032,11 @@ def check_for_folder():
 def game_end(ai_manager, player, progress_tracker, time):
     global previous_time
 
-    new_epsilon = (ai_manager.epsilon - 1/EPSILON_DECAY)
-    if new_epsilon < 0:
-        new_epsilon = 0
+    if EPSILON_ACTIVE:
+        # Decay Epsilon
+        new_epsilon = (ai_manager.epsilon - 1/EPSILON_DECAY)
+        if new_epsilon < 0:
+            new_epsilon = 0
 
     ai_manager.ai_save_data["Epsilon"][ai_manager.model_number - 1] = new_epsilon
     ai_manager.save_model()
@@ -1086,7 +1124,7 @@ def main(progress_tracker):
         ai_manager.frame_count += 1
         ai_manager.move_ais()
         for ai in ai_manager.ai_list:
-            ai.check_for_collisions(current_time, player)
+            ai.check_for_player_collisions(current_time, player)
 
         for glue in glues:
             glue.check_for_collisions(ai_manager.ai_list + [player], current_time)
@@ -1117,7 +1155,7 @@ def main(progress_tracker):
 
 
 if __name__ == "__main__":
-    progress_tracker = ProgressTracker()
+    progress_tracker = ProgressTracker(iteration)
 
     episodes = 1
     run = True
@@ -1131,13 +1169,15 @@ if __name__ == "__main__":
     
     pygame.quit()
 
-    print(f"Number of Episodes: {episodes}")
-    try:
-        progress_tracker.save_as_cvs()
-        print("Pls")
-    except:
-        data = progress_tracker.data
-        print(f"Episodes: {data["Episodes"][0]} | Rewards: {data["Rewards"][0]} | Actions: {data["Actions"][0]}\n")
-        print(f"Health: {data['Health'][0]} | Loss: {data['Loss'][0]} | Epsilon: {data['Epsilon'][0]} | Time: {data['Time'][0]}")
+    if data_saving:
 
-    progress_tracker.graph_results()
+        print(f"Number of Episodes: {episodes}")
+        try:
+            progress_tracker.save_as_cvs()
+            print("Pls")
+        except:
+            data = progress_tracker.data
+            print(f"Episodes: {data["Episodes"][0]} | Rewards: {data["Rewards"][0]} | Actions: {data["Actions"][0]}\n")
+            print(f"Health: {data['Health'][0]} | Loss: {data['Loss'][0]} | Epsilon: {data['Epsilon'][0]} | Time: {data['Time'][0]}")
+
+        progress_tracker.graph_results()
