@@ -1,15 +1,13 @@
-# Note: Begin one of the most painful part of this dumb project (Hivemind time).
-# Reorganize how actions are handled in order to be able to function with the hivemind structure of the AI.
-# After the Hivemind has been created. Then I shall remake the model saving in order to work with the current changes (Step 6)
+# Note: I am SO CLOSE (I think lol)
+# Trying to not get distracted by Silksong lol.
 
 # Todo: 
-# 1: Minor improvements: AI Input generalization , Removal of recursive loop , Optimzation of device managerment, and model saving fix. (Done)
-# 2: Add better positive rewards for the AI such as when the AI closes the distance between the player and AI. (Done)
-# 3: Change the summing all of the Q_values during training to training each AI separately. (Done)
-# 4: Add the saving of H0 and C0 in AIManager. (Done)
-# 5: Add AI collisions. (Done?)
-# 6: Add model progress tracking with TensorBoard and/or Matplotlib. (Done)
-# 7: Get happy... (Impossible)
+# 1: Iteration: This is the final step (I hope). I will iterate through the following steps below until the program works as intended. (In Progress)
+#   a: Train the AI for a varying amount of episodes (10-400)
+#   b: Preform data analysis on the results of the training.
+#   c: Change hyperparameters and/or reward values based on the data analysis.
+#   d: Repeat until the AI is functioning as intended.
+# 2: Get happy... (Impossible)
 
 import torch
 import sys
@@ -25,7 +23,7 @@ from torch import nn
 from collections import deque
 
 # Game constants
-MAX_EPISODES = 400
+MAX_EPISODES = 150
 WINDOW_X, WINDOW_Y = 1500, 750
 TIME_LIMIT = 60000
 BLACK = (0, 0, 0)
@@ -35,7 +33,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 5
+GLUES = 0
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -60,8 +58,8 @@ INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
 DISCOUNT_FACTOR = 0.9
 SYNC_MODEL = 30
 BATCH_SIZE = 32
-EPSILON_ACTIVE = False # Determines if epsilon is active
-EPSILON_DECAY = 300 # How many episodes/games the ai plays until epsilon is 0.
+EPSILON_ACTIVE = True # Determines if epsilon is active
+EPSILON_DECAY = 100 # How many episodes/games the ai plays until epsilon is 0.
 AI_SAVE_DATA = {
     "Model": [],
     "Ais": [],
@@ -188,6 +186,8 @@ class Object:
             self.dy = MAX_VELOCITY
         elif self.dy < -MAX_VELOCITY:
             self.dy = -MAX_VELOCITY
+
+    # Math is FUN
 
     def get_center(self):
         # Returns the center of the object.
@@ -347,6 +347,8 @@ class Player(Object):
             average_obj_y += y
 
         return average_obj_x/len(self.objects), average_obj_y/len(self.objects)
+    
+    # Never underestimate a fish
 
 
 class AI(Object):
@@ -547,6 +549,7 @@ class TrainingData:
 
 class HivemindLSTM(nn.Module):
     # We will be using an LSTM model in this experiment. This LSTM will control the AI objects.
+    # How many Networks can a Network Neural if a Network could Neural Networks?
 
     def __init__(self, num_layers, input_size, hidden_size, output_size, num_ais):
         super(HivemindLSTM, self).__init__()
@@ -606,7 +609,7 @@ class HivemindLSTM(nn.Module):
     
 
 class AIHivemindManager: # HIVEMIND TIME!!!
-    def __init__(self, num_ais, glues, player):
+    def __init__(self, num_ais, glues, player, data_manager):
         self.policy_model = HivemindLSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE, num_ais).to(device)
         self.ai_save_data = None
         self.model_number = None
@@ -620,7 +623,7 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         self.ai_list = self.create_ais(num_ais)
         self.loss_fn = nn.SmoothL1Loss()
         self.frame_count = 0
-        self.data_manager = TrainingData(max_length=3600)
+        self.data_manager = data_manager
         self.previous_memory = None
         self.memory = torch.zeros((NUM_SAVED_FRAMES, SEQUENCE_LENGTH), dtype=torch.float32).to(device)
 
@@ -838,6 +841,7 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         # Average the total_loss.
         total_loss /= NUM_AI_OBJECTS
 
+        # How does one determine if they are queer? Am I a "queer" individual? What is a queer?
         # Optimize the model
         self.optimizer.zero_grad()
         total_loss.backward()
@@ -1094,7 +1098,7 @@ def draw_game(player, glues, time, ai_manager):
     pygame.display.flip()
 
 
-def main(progress_tracker):
+def main(progress_tracker, data_manager):
     sys.setrecursionlimit(100000)
     end = False
     num_frames = 0
@@ -1105,7 +1109,7 @@ def main(progress_tracker):
     for _ in range(GLUES):
         glue = Glue(GLUE_DIM, GLUE_DIM, window, YELLOW, [player]+glues, distance=GLUE_DIM)
         glues.append(glue)
-    ai_manager = AIHivemindManager(NUM_AI_OBJECTS, glues, player)
+    ai_manager = AIHivemindManager(NUM_AI_OBJECTS, glues, player, data_manager)
 
     # Game loop, YIPPEEEEEEE
     while running:
@@ -1163,13 +1167,14 @@ def main(progress_tracker):
 
 if __name__ == "__main__":
     progress_tracker = ProgressTracker(iteration)
+    data_manager = TrainingData(max_length=3600)
 
     episodes = 1
     run = True
     check_for_folder()
     while run:
         progress_tracker.append(episodes, "Episodes")
-        run = main(progress_tracker)
+        run = main(progress_tracker, data_manager)
         episodes += 1
         if episodes >= MAX_EPISODES:
             run = False
