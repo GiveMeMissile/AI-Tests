@@ -35,7 +35,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 0
+GLUES = 5
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -53,7 +53,7 @@ COLLISION_TIMER = 500
 HIDDEN_SIZE = 64
 OUTPUT_SIZE = 9
 LEARNING_RATE = 0.0001
-NUM_AI_OBJECTS = 5
+NUM_AI_OBJECTS = 3
 NUM_SAVED_FRAMES = 20
 SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
 INPUT_SHAPE = (NUM_SAVED_FRAMES, SEQUENCE_LENGTH)
@@ -77,15 +77,15 @@ SAVE_FOLDER = "RL_LSTM_Models"
 INFO_FILE = SAVE_FOLDER + "/" +"model_info.json"
 DATA_FOLDER = "RL_LSTM_Progress_Data"
 
-# AI Reward values
-GLOBAL_DIVIDE = 5
-PLAYER_CONTACT = 1.5
-GLUE_CONTACT = -.75
-WALL_CONTACT = -.2
-MOVING_TOWARDS_PLAYER = .3
-PLAYER_NEARBY = .4
-NO_MOVEMENT = -.5
-AI_COLLISION = -1
+# AI Reward values, reward values should in the interval [-5, 5].
+DIFFERENCE_TRANSFORMATION = 0.375
+PLAYER_CONTACT = 2
+GLUE_CONTACT = -1
+WALL_CONTACT = -.5
+MOVING_TOWARDS_PLAYER = .5
+PLAYER_NEARBY = .7
+NO_MOVEMENT = -.75
+AI_COLLISION = -1.5
 
 
 # Other important stuff
@@ -241,13 +241,11 @@ class Glue(Object):
         for obj in objects:
             # Managing collisions with da glue.
             if self.hitbox.colliderect(obj.hitbox):
-
-                if self.dx == 0 and self.dy == 0:
-                    obj.dx, obj.dy = self.alter_velocity(obj.dx, obj.dy)
-
-                else:
-                    obj.dx += (self.glue_drag * self.dx)/5
-                    obj.dy += (self.glue_drag * self.dy)/5
+                
+                obj.dx, obj.dy = self.alter_velocity(obj.dx, obj.dy)
+                if not (self.dx == 0 and self.dy == 0):
+                    obj.dx += (self.glue_drag * self.dx)
+                    obj.dy += (self.glue_drag * self.dy)
                 
                 if isinstance(obj, AI):
                     obj.in_glue = True
@@ -396,10 +394,10 @@ class AI(Object):
         if (directional_vector[3]):
             self.dx += ACCELERATION
 
-        self.check_bounds()
         self.apply_friction()
         self.check_max_velocity()        
         self.move()
+        self.check_bounds()
 
     def get_directional_vector(self):
         match self.action:
@@ -470,20 +468,23 @@ class AI(Object):
         if axis == 'x':
             velocity = self.dx
             location = self.hitbox.x
+            boundry = WINDOW_X
         elif axis == 'y':
             velocity = self.dy
             location = self.hitbox.y
+            boundry = WINDOW_Y
         else:
+            print("Error: The inputted axis is not valid. Please use 'x' or 'y'.")
             return False
 
 
-        if velocity > 0 and location + PLAYER_DIM >= WINDOW_Y - 10:
+        if velocity > 0 and location + PLAYER_DIM >= boundry - 10:
             return True
         elif velocity < 0 and location <= 10:
             return True
-        elif location + PLAYER_DIM >= WINDOW_X - 1:
+        elif location + PLAYER_DIM >= boundry:
             return True
-        elif location <= 1:
+        elif location <= 0:
             return True
         
         return False
@@ -705,58 +706,62 @@ class AIHivemindManager: # HIVEMIND TIME!!!
     def calculate_reward(self):
 
         rewards = torch.zeros(len(self.ai_list))
-        global_reward = 0
         for i, ai in enumerate(self.ai_list):
             reward = 0
+
+            # Pentalties AI for being in a glue.
             if ai.in_glue:
                 reward += GLUE_CONTACT
-                global_reward += GLUE_CONTACT / (GLOBAL_DIVIDE*len(self.ai_list))
+
+            # Rewards AI for touching the player.
             if ai.touching_player:
                 reward += PLAYER_CONTACT
-                global_reward += PLAYER_CONTACT / (GLOBAL_DIVIDE*len(self.ai_list))
+
+            # Pentalties AI for moving into a wall (Like a bozo).
             if ai.moving_into_wall(axis='x'):
                 reward += WALL_CONTACT
-                global_reward += WALL_CONTACT / (GLOBAL_DIVIDE*len(self.ai_list))
             if ai.moving_into_wall(axis='y'):
                 reward += WALL_CONTACT
-                global_reward += WALL_CONTACT / (GLOBAL_DIVIDE*len(self.ai_list))
+
+            # Rewards AI for moving towards the player while not in a glue.
             if ai.moving_towards_player(self.player, axis='x') and not ai.in_glue:
                 reward += MOVING_TOWARDS_PLAYER
-                global_reward += MOVING_TOWARDS_PLAYER / (GLOBAL_DIVIDE*len(self.ai_list))
             if ai.moving_towards_player(self.player, axis='y') and not ai.in_glue:
                 reward += MOVING_TOWARDS_PLAYER
-                global_reward += MOVING_TOWARDS_PLAYER / (GLOBAL_DIVIDE*len(self.ai_list))
+
+            # Rewards AI for being near the player while not in a glue.
             if ai.nearby_player(self.player) and not ai.in_glue:
                 reward += PLAYER_NEARBY
-                global_reward += PLAYER_NEARBY / (GLOBAL_DIVIDE*len(self.ai_list))
+
+            # Checks for collisions between different AI objects and applies a negative reward if there is a collision.
             if ai.collided_with_ai:
                 reward += AI_COLLISION
-                global_reward += AI_COLLISION / (GLOBAL_DIVIDE*len(self.ai_list))
                 ai.collided_with_ai = False
 
+            # Pentalties AI for not moving.
             if ai.dx == 0 and ai.dy == 0:
                 reward += NO_MOVEMENT
-                global_reward += NO_MOVEMENT / (GLOBAL_DIVIDE*len(self.ai_list))
 
+            # Rewards AI for closing the distance between itself and the player.
+            # Pentalties AI for increasing the distance between itself and the player.
             if not ai.previous_x == None and not self.player.previous_x == None:
                 ai_x, ai_y = ai.get_center()
                 player_x, player_y = self.player.get_center()
 
+                # These values have a max of 2 and a min of -2 before being transformed to a range of 0.75 to -0.75
                 x_difference = (abs(ai.previous_x - self.player.previous_x) - abs(ai_x - player_x))/MAX_VELOCITY
                 y_difference = (abs(ai.previous_y - self.player.previous_y) - abs(ai_y - player_y))/MAX_VELOCITY
 
-                reward += (x_difference + y_difference)/2
+                # Now it will be transformed to a range of 0.75 to -0.75 and then averaged and added to the reward.
+                reward += (x_difference * DIFFERENCE_TRANSFORMATION  + y_difference * DIFFERENCE_TRANSFORMATION)/2
                 
             ai.in_glue = False
             rewards[i] = reward
 
         # Increases reward if multiple AIs are touching the player
         num_ais_touching_player = sum([1 for ai in self.ai_list if ai.touching_player])
-        if num_ais_touching_player > 1:
-            rewards += num_ais_touching_player * .5
-
-        # Adds team success/failiure
-        rewards += global_reward
+        if num_ais_touching_player > 1 or len(self.ai_list) == 1:
+            rewards += (num_ais_touching_player / len(self.ai_list))*.75
 
         self.total_rewards += (sum(rewards)/len(rewards)).item()
         self.reward_count += 1
@@ -1037,6 +1042,8 @@ def game_end(ai_manager, player, progress_tracker, time):
         new_epsilon = (ai_manager.epsilon - 1/EPSILON_DECAY)
         if new_epsilon < 0:
             new_epsilon = 0
+    else:
+        new_epsilon = ai_manager.epsilon
 
     ai_manager.ai_save_data["Epsilon"][ai_manager.model_number - 1] = new_epsilon
     ai_manager.save_model()
