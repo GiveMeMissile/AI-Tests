@@ -7,7 +7,25 @@
 #   b: Preform data analysis on the results of the training.
 #   c: Change hyperparameters and/or reward values based on the data analysis.
 #   d: Repeat until the AI is functioning as intended.
+# ISSUES HAVE BEEN DETECTED AND SHALL BE ELIMINATED.
+# Issue #1: Epsilon = BAD: So due to the small effect of each action of the AI and the physics of this simulation, Epsilon as proven to be 
+#   more of a detriment than a benifit. In order to fix this I must change Epsilon to have the AI preform the same random action more than 
+#   one after being chosen. This should (hopefully) allow the AI to explore via Epsilon effectively!!! (YIPEEEEEEEEE)
+# Issue #2: The simulation kinda lags: This issue is mostly caused by the training part of the AI This slows down training especially with bigger models.
+#   SO in order to solve this...I shall seperate the training proccess from the simulation proccess.
+#   I will save all of the training data in the "Training_Data" class. Where The data will be saved into a csv file after it reaches max.
+#   This will allow me to train without running the simulation at the same time. SO BETTER PREFORMANCE (I hope).
+# Issue #3: Model deletion: I don't like having to delete a model when I want to train it again from Scratch:
+#   Solution: Create a function which removes the AI model and its JSON data. 
 # 2: Get happy... (Impossible)
+
+# Iteration progress:
+#   Iter 1: eps: 190, ais: 3, glues: 0, lr: 0.0001, Other Changes: DNE
+#   Iter 2: eps: 150, ais: 3, glues: 5, lr: 0.0001, Other Changes: Minor Tweak to Reward values.
+#   Iter 3: eps: 150, ais: 1, glues: 5, lr: 0.00001, Other Changes: DNE
+#   Iter 4: eps: 150, ais: 1, glues: 5, lr: 0.000001, Other Changes: Hidden Size increase 64x2
+#   Iter 5: eps: 150, ais: 1, glues: 5, lr: 0.0000001, Other Changes: Hidden Size increase 64x4
+
 
 import torch
 import sys
@@ -33,7 +51,7 @@ RED = (255, 0, 0)
 
 # Glue constants
 GLUE_DIM = 75
-GLUES = 0
+GLUES = 5
 GLUE_MOVEMENT_TIME = 5000
 
 # Other object constants (player + AI objects)
@@ -50,7 +68,7 @@ NUM_LAYERS = 4
 COLLISION_TIMER = 500
 HIDDEN_SIZE = 64
 OUTPUT_SIZE = 9
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.000001
 NUM_AI_OBJECTS = 3
 NUM_SAVED_FRAMES = 20
 SEQUENCE_LENGTH = 4 + 4 * NUM_AI_OBJECTS + 2 * GLUES
@@ -76,25 +94,26 @@ INFO_FILE = SAVE_FOLDER + "/" +"model_info.json"
 DATA_FOLDER = "RL_LSTM_Progress_Data"
 
 # AI Reward values, reward values should in the interval [-5, 5].
-DIFFERENCE_TRANSFORMATION = 0.375
+DIFFERENCE_TRANSFORMATION = 0.5
 PLAYER_CONTACT = 2
-GLUE_CONTACT = -1
+GLUE_CONTACT = -1.5
 WALL_CONTACT = -.5
-MOVING_TOWARDS_PLAYER = .5
-PLAYER_NEARBY = .7
-NO_MOVEMENT = -.75
-AI_COLLISION = -1.5
+MOVING_TOWARDS_PLAYER = .3
+PLAYER_NEARBY = .4
+NO_MOVEMENT = -.5
+AI_COLLISION = -1
 
 
 # Other important stuff
-iteration = 0  # Used for data saving and testing purposes.
-data_saving = True
-device = "cuda" if torch.cuda.is_available() else "cpu"
-window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))
-previous_time = 0
-pygame.init()
-pygame.font.init()
-font = pygame.font.SysFont("New Roman", 30)
+iteration = 4  # Used for data saving and testing purposes.
+data_saving = False  # If True AI's training progress will be saved so it can be analized later.
+delete_model_file = True  # If True then if a model file exists for the current variables, it gets deleated and replaced by a new model.
+device = "cuda" if torch.cuda.is_available() else "cpu"  # Device agnostic code ig
+window = pygame.display.set_mode((WINDOW_X, WINDOW_Y))  # Pygame window wow
+previous_time = 0  # Used for time calculation for each game/episode.
+pygame.init()  # Why am I commenting on all of these lines of code?
+pygame.font.init()  # I am so gooberish ig idk please turn me into a fish.
+font = pygame.font.SysFont("New Roman", 30)  # Its font idk what to say
 
 
 class Object:
@@ -609,10 +628,12 @@ class HivemindLSTM(nn.Module):
     
 
 class AIHivemindManager: # HIVEMIND TIME!!!
-    def __init__(self, num_ais, glues, player, data_manager):
+
+    def __init__(self, num_ais, glues, player, data_manager, model_number):
         self.policy_model = HivemindLSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE, num_ais).to(device)
         self.ai_save_data = None
-        self.model_number = None
+        self.idx = None
+        self.model_number = model_number
         self.epsilon = 1
         self.load_model()
         self.target_model = HivemindLSTM(NUM_LAYERS, SEQUENCE_LENGTH, HIDDEN_SIZE, OUTPUT_SIZE, num_ais).to(device)
@@ -860,49 +881,34 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         with open(INFO_FILE, 'r') as f:
             self.ai_save_data = json.load(f)
         
-        empty = self.match_model()
-
-        if self.model_number == None:
+        empty, idx = self.match_model()
+        if idx is None:
             print("Model not found. Creating a new one!")
             if empty:
                 self.ai_save_data["Model"].append(1)
                 self.model_number = 1
-            else:
+                idx = 0
+            elif model_number is None:
                 self.model_number = max(self.ai_save_data["Model"]) + 1
-                self.ai_save_data["Model"].append(self.model_number)
+                idx = len(self.ai_save_data["Model"])
+            else:
+                idx = len(self.ai_save_data["Model"])
+            self.ai_save_data["Model"].append(self.model_number)
             self.ai_save_data["Ais"].append(NUM_AI_OBJECTS)
             self.ai_save_data["Glues"].append(GLUES)
             self.ai_save_data["Hidden"].append(HIDDEN_SIZE)
             self.ai_save_data["Frames"].append(NUM_SAVED_FRAMES)
             self.ai_save_data["Layers"].append(NUM_LAYERS)
             self.ai_save_data["Epsilon"].append(1)
+            self.idx = idx
             return
+        self.idx = idx
         
         print(f"Found model {self.model_number}, Now loading model...")
         model_dir = SAVE_FOLDER + '/model_' + str(self.model_number) + ".pth"
         save_dict = torch.load(model_dir)
         self.policy_model.load_state_dict(save_dict)
         print(f"Model {self.model_number} successfully loaded!")
-
-
-    def match_model(self):
-
-        if len(self.ai_save_data["Model"]) == 0:
-            return True
-        
-        for i in range(len(self.ai_save_data["Model"])):
-            ais = self.ai_save_data["Ais"][i] == NUM_AI_OBJECTS
-            glues = self.ai_save_data["Glues"][i] == GLUES
-            hidden = self.ai_save_data["Hidden"][i] == HIDDEN_SIZE
-            frames = self.ai_save_data["Frames"][i] == NUM_SAVED_FRAMES
-            layers = self.ai_save_data["Layers"][i] == NUM_LAYERS
-
-            if ais and glues and hidden and frames and layers:
-                self.model_number = self.ai_save_data["Model"][i]
-                self.epsilon = self.ai_save_data["Epsilon"][i]
-                break
-
-        return False
         
     def save_model(self):
         # Saves the model 
@@ -913,6 +919,28 @@ class AIHivemindManager: # HIVEMIND TIME!!!
         print("Saving model")
         torch.save(self.policy_model.state_dict(), SAVE_FOLDER + "/" + "model_" + str(self.model_number) + ".pth")
         print(f"Model {self.model_number} saved successfully.\n")
+
+
+    def match_model(self):
+
+        if len(self.ai_save_data["Model"]) == 0:
+            return True, None
+            
+        for i in range(len(self.ai_save_data["Model"])):
+            ais = self.ai_save_data["Ais"][i] == NUM_AI_OBJECTS
+            glues = self.ai_save_data["Glues"][i] == GLUES
+            hidden = self.ai_save_data["Hidden"][i] == HIDDEN_SIZE
+            frames = self.ai_save_data["Frames"][i] == NUM_SAVED_FRAMES
+            layers = self.ai_save_data["Layers"][i] == NUM_LAYERS
+
+            if ais and glues and hidden and frames and layers:
+                self.model_number = self.ai_save_data["Model"][i]
+                self.epsilon = self.ai_save_data["Epsilon"][i]
+                idx = i
+                return False, idx
+                break
+
+        return False ,None
 
 
 class ProgressTracker:
@@ -1025,6 +1053,51 @@ class ProgressTracker:
         self.graph(z_score_list, name_list)
 
 
+def kill_model():
+    with open(INFO_FILE) as f:
+        model_info = json.load(f)
+
+        if len(model_info["Model"]) == 0:
+            return None
+        
+        model_file = None
+
+        for i in range(len(model_info["Model"])):
+            ais = model_info["Ais"][i] == NUM_AI_OBJECTS
+            glues = model_info["Glues"][i] == GLUES
+            hidden = model_info["Hidden"][i] == HIDDEN_SIZE
+            frames = model_info["Frames"][i] == NUM_SAVED_FRAMES
+            layers = model_info["Layers"][i] == NUM_LAYERS
+
+            if ais and glues and hidden and frames and layers:
+                model_file = SAVE_FOLDER + '/model_' + str(model_info["Model"][i]) + ".pth"
+                idx = i
+                model_number = model_info["Model"][idx]
+                print(f"Now Deleating Model {model_number}...")
+                break
+
+        if model_file is None:
+            print("There is currently no model file saved. There is no model to be deleated.\n")
+            return None
+
+        if os.path.exists(model_file):
+            os.remove(model_file)
+        else:
+            print(f"Was unable to find model {model_number}\n")
+
+        model_info["Model"].pop(idx)
+        model_info["Ais"].pop(idx)
+        model_info["Glues"].pop(idx)
+        model_info["Hidden"].pop(idx)
+        model_info["Frames"].pop(idx)
+        model_info["Layers"].pop(idx)
+        model_info["Epsilon"].pop(idx)
+        with open(INFO_FILE, 'w') as f:
+            json.dump(model_info, f)
+            print("The model had been deleated successfully.\n")
+        return model_number
+
+
 def check_for_folder():
     # Creates AI save directory and JSON file if one is not present.
 
@@ -1049,7 +1122,7 @@ def game_end(ai_manager, player, progress_tracker, time):
     else:
         new_epsilon = ai_manager.epsilon
 
-    ai_manager.ai_save_data["Epsilon"][ai_manager.model_number - 1] = new_epsilon
+    ai_manager.ai_save_data["Epsilon"][ai_manager.idx] = new_epsilon
     ai_manager.save_model()
 
     previous_time = pygame.time.get_ticks()
@@ -1098,8 +1171,7 @@ def draw_game(player, glues, time, ai_manager):
     pygame.display.flip()
 
 
-def main(progress_tracker, data_manager):
-    sys.setrecursionlimit(100000)
+def main(progress_tracker, data_manager, model_number):
     end = False
     num_frames = 0
     running = True
@@ -1109,7 +1181,7 @@ def main(progress_tracker, data_manager):
     for _ in range(GLUES):
         glue = Glue(GLUE_DIM, GLUE_DIM, window, YELLOW, [player]+glues, distance=GLUE_DIM)
         glues.append(glue)
-    ai_manager = AIHivemindManager(NUM_AI_OBJECTS, glues, player, data_manager)
+    ai_manager = AIHivemindManager(NUM_AI_OBJECTS, glues, player, data_manager, model_number)
 
     # Game loop, YIPPEEEEEEE
     while running:
@@ -1168,13 +1240,16 @@ def main(progress_tracker, data_manager):
 if __name__ == "__main__":
     progress_tracker = ProgressTracker(iteration)
     data_manager = TrainingData(max_length=3600)
+    model_number = None
+    if delete_model_file:
+        model_number = kill_model()
 
     episodes = 1
     run = True
     check_for_folder()
     while run:
         progress_tracker.append(episodes, "Episodes")
-        run = main(progress_tracker, data_manager)
+        run = main(progress_tracker, data_manager, model_number)
         episodes += 1
         if episodes >= MAX_EPISODES:
             run = False
